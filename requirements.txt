@@ -1,5 +1,9 @@
-numpy>=1.24.0
-matplotlib>=3.7.0
-networkx>=3.0
-scipy>=1.10.0
-tqdm>=4.65.0
+streamlit
+pandas
+numpy
+matplotlib
+altair
+vl-convert-python
+datasets
+pyarrow
+fastparquet
