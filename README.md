@@ -4,7 +4,7 @@
 > *"Does perfect algorithmic safety inevitably lead to human cognitive atrophy?"*
 
 ## Project Overview
-This repository hosts the Python simulation code and research papers produced by the **Computational Social Simulation Lab**. 
+This repository hosts the Python simulation code and research papers produced by the **Computational Social Simulation Lab**. 
 
 We set out to model a digital society ($N=1000$ agents) resistant to AI-generated disinformation. While testing a new technical architecture, our simulations uncovered a counter-intuitive psychological paradox regarding human reliance on automation.
 
@@ -41,15 +41,38 @@ We tested a modified engine (Layer 2.5) that intentionally re-introduces frictio
 
 ---
 
+## Interactive Dashboard
+
+We have developed a real-time web interface to interact with the models and visualize real-world data.
+
+### Features
+1.  **Real-Time Simulation:** Adjust parameters (Bot Ratio, Influence Alpha, Agent Count) on the fly and watch the "Belief Heatmap" evolve instantly.
+2.  **Moltbook Observatory:** Analysis of real traffic from the Moltbook AI network, visualizing the spread of "Truth" vs "Hallucination" across bot clusters.
+3.  **Data Export:** Download high-resolution PNGs and interactive HTML reports for research papers.
+
+### How to Run Locally
+
+    # 1. Install dependencies
+    pip install -r requirements.txt
+
+    # 2. Launch the Dashboard
+    streamlit run app.py
+
+---
+
 ## Repository Structure
 
 | File | Description |
 | :--- | :--- |
+| `app.py` | **Main Dashboard application**. Interactive Streamlit interface. |
+| `moltbook_REAL_data.csv` | Dataset containing real agent interactions from the Moltbook archive. |
 | `src/01_rap_bft_simulation.py` | Simulates the network resilience against bot swarms (Hegselmann-Krause dynamics). |
 | `src/02_cognitive_atrophy.py` | Models the decay of human critical skills under total automation vs. Socratic Friction. |
+| `download_moltbook.py` | Script to fetch and clean fresh data from the Moltbook Observatory. |
 | `output/` | Contains the generated graphs (`fig1`, `fig2`). |
 
 ---
 
 ## Contributing
+
 This is an experimental research project. We welcome forks, pull requests, and alternative modeling approaches to challenge our parameters.
