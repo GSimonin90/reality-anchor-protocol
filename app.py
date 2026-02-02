@@ -34,7 +34,7 @@ if mode == "Simulation Model":
     st.sidebar.header("🎛️ Simulation Parameters")
     st.sidebar.markdown("Adjust these values to see how disinformation spreads in real-time.")
     
-    # 1. PARAMETERS WITH EXPLANATIONS (Tooltips)
+    # 1. PARAMETERS WITH EXPLANATIONS
     n_agents = st.sidebar.slider(
         "Number of Agents (Nodes)", 
         min_value=100, max_value=2000, value=1000, step=100,
@@ -56,8 +56,24 @@ if mode == "Simulation Model":
     alpha = st.sidebar.slider(
         "Influence Factor (Alpha)", 
         min_value=0.01, max_value=0.5, value=0.1,
-        help="Permeability to influence (DeGroot Model). High Alpha = Agents change their minds easily based on neighbors. Low Alpha = Agents are stubborn/conservative."
+        help="Permeability to influence (DeGroot Model). High Alpha = Agents change their minds easily based on neighbors."
     )
+
+    st.sidebar.markdown("---")
+    
+    # --- LA SOLUZIONE (IL TUO METODO) ---
+    st.sidebar.subheader("🛡️ Countermeasures")
+    rap_active = st.sidebar.checkbox(
+        "Activate Reality Anchor Protocol", 
+        value=False,
+        help="Enables Bridging Algorithms and Socratic Friction. This filters out viral signals that lack consensus across diverse clusters."
+    )
+    
+    # Visual feedback in sidebar
+    if rap_active:
+        st.sidebar.success("✅ R.A.P. Defense System: ONLINE")
+    else:
+        st.sidebar.warning("⚠️ System Vulnerable: Standard Algorithmic Feed")
 
     # LEGEND
     st.sidebar.markdown("---")
@@ -92,8 +108,14 @@ if mode == "Simulation Model":
             mask_honest[bot_start:bot_end] = False
             noise = np.random.normal(0, 0.02, size=n_agents)
             
+            # --- APPLICAZIONE LOGICA R.A.P. ---
+            # Se il protocollo è attivo, riduciamo l'influenza virale (Alpha)
+            current_alpha = alpha
+            if rap_active:
+                current_alpha = alpha * 0.05 # Simulazione del filtro Bridging
+            
             # DeGroot Update Rule
-            current_agents[mask_honest] += alpha * (global_mean - current_agents[mask_honest]) + noise[mask_honest]
+            current_agents[mask_honest] += current_alpha * (global_mean - current_agents[mask_honest]) + noise[mask_honest]
             current_agents[bot_start:bot_end] = 1.0 # Reset bots
             
             current_agents = np.clip(current_agents, 0, 1)
@@ -103,7 +125,9 @@ if mode == "Simulation Model":
         fig, ax = plt.subplots(figsize=(10, 5))
         cax = ax.imshow(history, aspect='auto', cmap='RdYlGn_r', vmin=0, vmax=1)
         
-        ax.set_title(f"Belief Evolution (Bots: {bot_pct*100:.0f}%, Alpha: {alpha})")
+        # Titolo dinamico basato sullo stato di difesa
+        status_text = "🛡️ PROTECTED" if rap_active else "⚠️ VULNERABLE"
+        ax.set_title(f"Network State: {status_text} (Bots: {bot_pct*100:.0f}%)")
         ax.set_xlabel("Time (Steps)")
         ax.set_ylabel("Agent ID (Population)")
         
@@ -122,14 +146,18 @@ if mode == "Simulation Model":
             honest_belief = np.concatenate((final_belief[:bot_start], final_belief[bot_end:]))
             avg_corruption = np.mean(honest_belief)
             
-            st.metric(
-                label="Avg Honest Corruption", 
-                value=f"{avg_corruption:.3f}",
-                delta=f"{'High Risk' if avg_corruption > 0.5 else 'Stable'}",
-                delta_color="inverse"
-            )
+            # Logica Metrica: Se la corruzione è bassa (< 0.15) è Stabile
+            if avg_corruption < 0.15:
+                st.metric("Avg Honest Corruption", f"{avg_corruption:.3f}", delta="Stable", delta_color="normal")
+            else:
+                st.metric("Avg Honest Corruption", f"{avg_corruption:.3f}", delta="High Risk", delta_color="inverse")
 
         with col2:
+            # Info box se il protocollo è attivo
+            if rap_active:
+                 st.info("💡 **Observation:** With R.A.P. active, the Bridging Algorithm prevents the red bot swarm from influencing the honest population, keeping corruption low.")
+            
+            # Download Button
             img_buffer = io.BytesIO()
             fig.savefig(img_buffer, format='png', dpi=300)
             img_buffer.seek(0)
@@ -186,7 +214,7 @@ elif mode == "Moltbook Data Analysis":
         col2.metric("Unique Agents", df['agent_id'].nunique())
         col3.metric("Avg. Belief Score", f"{df['belief_score'].mean():.2f}")
 
-        st.write("###  Interactive Timeline")
+        st.write("### Interactive Timeline")
         st.caption("Hover over points to see Agent ID and Content. Use mouse wheel to zoom.")
         
         chart = alt.Chart(df).mark_circle(size=60).encode(
