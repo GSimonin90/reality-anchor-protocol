@@ -84,7 +84,7 @@ def generate_pdf_report(df, chart_obj=None):
     pdf.cell(0, 10, "Executive Summary", 0, 1)
     pdf.set_font("Helvetica", size=12)
     pdf.cell(0, 8, f"Total Items Analyzed: {total}", 0, 1)
-    pdf.cell(0, 8, f"Logical Issues: {flagged} ({ratio:.1f}%)", 0, 1)
+    pdf.cell(0, 8, f"Issues Detected: {flagged} ({ratio:.1f}%)", 0, 1)
     pdf.cell(0, 8, f"Average Aggression Score: {avg_aggression:.1f}/10", 0, 1)
     pdf.cell(0, 8, f"Negative Sentiment Count: {neg_sentiment}", 0, 1)
     pdf.ln(10)
@@ -239,7 +239,7 @@ def normalize_dataframe(df):
     final_cols = [c for c in final_cols if c in new_df.columns]
     return new_df[final_cols]
 
-# --- HELPER: LOGIC GUARD (CACHED & RETRY) ---
+# --- HELPER: LOGIC & FACT GUARD (HYBRID ENGINE) ---
 @st.cache_data(show_spinner=False)
 def analyze_fallacies_cached(text, api_key):
     if not text or len(str(text)) < 5: return None
@@ -249,28 +249,41 @@ def analyze_fallacies_cached(text, api_key):
             client = genai.Client(api_key=api_key)
             is_long_doc = len(text) > 2000
             
+            # --- PROMPT UPGRADE: Logic + Factual Accuracy ---
             if is_long_doc:
                 prompt = f"""
-                Analyze LONG DOCUMENT. Identify MAIN fallacy.
+                Analyze LONG DOCUMENT as an expert Fact-Checker and Logic Analyst.
+                
+                1. Identify MAIN LOGICAL FALLACY (Ad Hominem, Strawman, etc.).
+                2. Identify MAIN FACTUAL ERRORS (False history, pseudoscience).
+                
                 Text snippet: "{text[:15000]}..."
-                JSON: {{ 
+                
+                JSON Response: {{ 
                     "has_fallacy": true, 
                     "fallacy_type": "Name (English)", 
                     "explanation": "Why (Input Lang)", 
-                    "correction": "Fix (Input Lang)",
+                    "correction": "Fix/Fact Check (Input Lang)",
                     "sentiment": "Positive/Neutral/Negative",
                     "aggression": 1-10 (Integer)
                 }}
                 """
             else:
                 prompt = f"""
-                Analyze text for fallacies + sentiment + aggression.
+                Analyze text as an expert Fact-Checker and Logic Analyst.
+                
+                1. Check for LOGICAL FALLACIES.
+                2. Check for FACTUAL ERRORS or DISINFORMATION (False history, pseudoscience, fake news).
+                
                 Text: "{text}"
-                JSON: {{ 
+                
+                If a factual error is found (e.g., "Che Guevara didn't graduate"), mark 'has_fallacy': true and set 'fallacy_type' to "Factual Error" or "Historical Inaccuracy".
+
+                JSON Response: {{ 
                     "has_fallacy": true/false, 
                     "fallacy_type": "Name (English) or None", 
-                    "explanation": "Why (Input Lang)", 
-                    "correction": "Fix (Input Lang)",
+                    "explanation": "Explain error in INPUT LANGUAGE", 
+                    "correction": "Provide truth in INPUT LANGUAGE",
                     "sentiment": "Positive/Neutral/Negative",
                     "aggression": 1-10 (Integer)
                 }}
@@ -296,6 +309,24 @@ st.markdown("### Cognitive Security & Logical Analysis Suite")
 st.markdown("---")
 
 mode = st.sidebar.radio("Select Module:", ["Simulation Model", "Social Data Analysis (Universal)", "Logic Guard (Doc/Text)"])
+
+# --- SIDEBAR DISCLAIMER ---
+st.sidebar.markdown("---")
+with st.sidebar.expander("ℹ️ System Capabilities & Limits", expanded=False):
+    st.markdown("""
+    **What this system CAN do:**
+    - Detect logical fallacies (e.g., Ad Hominem, Strawman).
+    - Analyze sentiment and aggression levels.
+    - Check established facts (History, Science, Geography).
+    
+    **Blind Spots & Limitations:**
+    - **Recent Events:** Knowledge cutoff may exclude news from the last 24-48h.
+    - **Niche Topics:** May lack data on obscure local events.
+    - **Hallucinations:** AI can occasionally generate incorrect information. 
+    
+    *Always verify critical claims independently.*
+    """)
+
 st.sidebar.markdown("---")
 st.sidebar.caption(f"API Calls Session: {st.session_state['api_calls']}")
 
@@ -312,8 +343,6 @@ if mode == "Simulation Model":
     if rap_active: st.sidebar.success("System Active")
     else: st.sidebar.warning("System Vulnerable")
     
-    # REMOVED BUTTON FOR REACTIVE UPDATES
-    # Simulation runs automatically when sliders change
     agents = np.zeros(n_agents)
     n_bots = int(n_agents * bot_pct)
     bot_start = int(n_agents * 0.3)
@@ -353,11 +382,23 @@ elif mode == "Social Data Analysis (Universal)":
     )
     
     if input_method == "CSV File Upload":
-        st.info("Best for Desktop Users with Chrome Extensions.")
-        with st.expander("Instructions"):
-            st.write("1. Use extensions like 'Instant Data Scraper'.")
-            st.write("2. Export data to CSV.")
-            st.write("3. Upload below.")
+        st.info("Desktop Mode: Use Chrome Extensions to capture data.")
+        
+        # --- IMPROVED INSTRUCTIONS SECTION ---
+        with st.expander(" How to extract data from Facebook, X (Twitter), Instagram"):
+            st.markdown("Social media platforms do not allow direct downloading. You need a **Browser Extension**.")
+            
+            st.markdown("#### Recommended Tools:")
+            st.markdown("1. **[Instant Data Scraper](https://chromewebstore.google.com/detail/instant-data-scraper/ofaokhiedipichpaobibbnahnkdoiiah)** (Free & Unlimited)\n*Best for lists of comments or posts. Easy to use (Pokeball icon).*")
+            st.markdown("2. **[Export Comments](https://exportcomments.com/)** (Freemium)\n*Easiest for specific posts, but has limits on the free plan.*")
+            
+            st.markdown("#### Step-by-Step Guide:")
+            st.markdown("1. Install one of the extensions above on Chrome/Edge.")
+            st.markdown("2. Go to the post you want to analyze.")
+            st.markdown("3. **Crucial:** Scroll down to load all comments *before* starting the extension.")
+            st.markdown("4. Click the extension icon and download as **CSV** or **XLSX**.")
+            st.markdown("5. Upload the file here. RAP will auto-detect the text.")
+
         uploaded_file = st.file_uploader("Upload CSV", type="csv")
         if uploaded_file:
             try:
@@ -445,7 +486,7 @@ elif mode == "Social Data Analysis (Universal)":
             agg_avg = adf['aggression'].mean()
             neg_pct = len(adf[adf['sentiment']=='Negative']) / len(adf) * 100
             
-            m1.metric("Logical Fallacies", flagged_count)
+            m1.metric("Logical/Factual Issues", flagged_count)
             m2.metric("Avg Aggression", f"{agg_avg:.1f}/10")
             m3.metric("Negative Sentiment", f"{neg_pct:.0f}%")
 
@@ -488,7 +529,7 @@ elif mode == "Social Data Analysis (Universal)":
 # MODULE 3: DOC GUARD
 # ==========================================
 elif mode == "Logic Guard (Doc/Text)":
-    st.header("Neural Logic Guard")
+    st.header("Neural Logic Guard and Fact Checker")
     c1, c2 = st.columns([2, 1])
     with c1:
         inp_type = st.radio("Input Type:", ["Text", "PDF"], horizontal=True)
