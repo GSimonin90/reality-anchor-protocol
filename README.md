@@ -46,9 +46,22 @@ We tested a modified engine (Layer 2.5) that intentionally re-introduces frictio
 We have developed a real-time web interface to interact with the models and visualize real-world data.
 
 ### Features
-1.  **Real-Time Simulation:** Adjust parameters (Bot Ratio, Influence Alpha, Agent Count) on the fly and watch the "Belief Heatmap" evolve instantly.
-2.  **Moltbook Observatory:** Analysis of real traffic from the Moltbook AI network, visualizing the spread of "Truth" vs "Hallucination" across bot clusters.
-3.  **Data Export:** Download high-resolution PNGs and interactive HTML reports for research papers.
+
+1. **Multi-Vector Social Intelligence** Analyze public opinion from any source.
+   * **Universal Import:** Ingest data from **Facebook, X (Twitter), Instagram, and TikTok** via CSV (compatible with extensions like *Instant Data Scraper*).
+   * **Native YouTube Scraper:** Extract comments directly from video URLs without API keys.
+   * **Mobile-Ready:** "Raw Text Paste" mode designed for mobile users to analyze copied threads on the fly.
+
+2. **Hybrid Truth Engine (Logic + Facts + Emotion)** Powered by **Google Gemini 2.5**, the system performs a 3-layer deep scan:
+   * **Logical Validity:** Detects formal and informal fallacies (e.g., *Ad Hominem, Strawman*).
+   * **Factual Accuracy:** Flags historical inaccuracies, pseudoscience, and disinformation.
+   * **Emotional Spectrum:** Measures **Sentiment** and **Aggression Levels** (0-10) to identify toxic patterns.
+
+3. **Neural Logic Guard** Upload full **PDF documents** (contracts, articles, political programs) or long-form text. The AI scans the entire document to identify the *primary* logical flaws or factual errors undermining the central thesis.
+
+4. **Reactive Simulation** Adjust parameters (*Bot Ratio, Influence Alpha, Agent Count*) on the fly and watch the "Belief Heatmap" evolve instantly in real-time to visualize the spread of misinformation.
+
+5. **Enterprise Reporting** Generate professional, paginated **PDF Reports** containing executive summaries, fallacy distribution charts, word clouds, and detailed line-by-line analysis for research or journalism.
 
 ### How to Run Locally
 
@@ -76,4 +89,5 @@ We have developed a real-time web interface to interact with the models and visu
 ## Contributing
 
 This is an experimental research project. We welcome forks, pull requests, and alternative modeling approaches to challenge our parameters.
+
 
