@@ -7,3 +7,8 @@ vl-convert-python
 datasets
 pyarrow
 fastparquet
+google-genai
+pypdf
+youtube-comment-downloader
+fpdf2
+wordcloud
