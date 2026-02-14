@@ -12,3 +12,4 @@ pypdf
 youtube-comment-downloader
 fpdf2
 wordcloud
+openpyxl
