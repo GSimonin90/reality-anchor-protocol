@@ -503,7 +503,7 @@ st.title("RAP: Reality Anchor Protocol")
 st.markdown("### Cognitive Security & Logical Analysis Suite")
 st.markdown("---")
 
-mode = st.sidebar.radio("Select Module:", ["Wargame Room (Simulation)", "Social Data Analysis (Universal)", "Comparation Test (A/B Testing)", "Cognitive Editor (Logic Guard)"])
+mode = st.sidebar.radio("Select Module:", ["Wargame Room (Simulation)", "Social Data Analysis (Universal)", "Comparison Test (A/B Testing)", "Cognitive Editor (Logic Guard)"])
 
 # --- DISCLAIMER ---
 st.sidebar.markdown("---")
@@ -929,10 +929,10 @@ elif mode == "Social Data Analysis (Universal)":
             st.error("Data integrity check failed. Please reload the file.")
 
 # ==========================================
-# MODULE 4: COMPARATION TEST (A/B TESTING)
+# MODULE 4: COMPARISON TEST (A/B TESTING)
 # ==========================================
-elif mode == "Comparation Test (A/B Testing)":
-    st.header("Comparation Test (A/B Testing)")
+elif mode == "Comparison Test (A/B Testing)":
+    st.header("Comparison Test (A/B Testing)")
     st.caption("Compare two YouTube videos or Datasets side-by-side.")
     
     col_a, col_b = st.columns(2)
