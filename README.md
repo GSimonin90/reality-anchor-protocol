@@ -45,23 +45,33 @@ We tested a modified engine (Layer 2.5) that intentionally re-introduces frictio
 
 We have developed a real-time web interface to interact with the models and visualize real-world data.
 
-### Features
+# Features
 
-1. **Multi-Vector Social Intelligence** Analyze public opinion from any source.
-   * **Universal Import:** Ingest data from **Facebook, X (Twitter), Instagram, and TikTok** via CSV (compatible with extensions like *Instant Data Scraper*).
-   * **Native YouTube Scraper:** Extract comments directly from video URLs without API keys.
-   * **Mobile-Ready:** "Raw Text Paste" mode designed for mobile users to analyze copied threads on the fly.
+### Social Data Analysis (The Core)
+* **Universal Import:** Ingest data from **Facebook, X (Twitter), Instagram, and TikTok** via CSV (compatible with extensions like *Instant Data Scraper*).
+* **Native YouTube Scraper:** Extract comments directly from video URLs without requiring personal API keys.
+* **Adaptive Personas:** Switch the analytical lens instantly. Ask the AI to analyze data as a **Strategic Intelligence Analyst**, a **Mass Psychologist** (focus on emotional triggers), a **Legal Consultant** (focus on liability/defamation), or a **Campaign Manager** (focus on opportunity).
+* **The Oracle:** Chat directly with your dataset. Ask questions like *"Who is the main target of hate?"* or *"Find the most persuasive argument"* and get answers based on the analyzed data.
 
-2. **Hybrid Truth Engine (Logic + Facts + Emotion)** Powered by **Google Gemini 2.5**, the system performs a 3-layer deep scan:
-   * **Logical Validity:** Detects formal and informal fallacies (e.g., *Ad Hominem, Strawman*).
-   * **Factual Accuracy:** Flags historical inaccuracies, pseudoscience, and disinformation.
-   * **Emotional Spectrum:** Measures **Sentiment** and **Aggression Levels** (0-10) to identify toxic patterns.
+### Comparison Test (A/B Testing)
+* **Head-to-Head Comparison:** Compare two different datasets or YouTube videos side-by-side.
+* **Metric Battle:** Instantly visualize the difference in **Aggression Levels**, **Bot Presence**, and **Logical Fallacies** between two sources (e.g., "Right-wing Video" vs "Left-wing Video").
 
-3. **Neural Logic Guard** Upload full **PDF documents** (contracts, articles, political programs) or long-form text. The AI scans the entire document to identify the *primary* logical flaws or factual errors undermining the central thesis.
+### Wargame Room (Live Simulation)
+* **Real-Time Info-War Simulator:** Visualize the spread of disinformation with a reactive heatmap and infection graphs.
+* **Network Topologies:** Choose the battlefield scenario: **Public Square** (high connectivity), **Echo Chambers** (isolated clusters), or **Influencer Network** (central hubs).
+* **Blue Team Countermeasures:** Deploy active defenses like **Targeted Debunking**, **Algorithmic Dampening**, or **Hard Bans** and watch the infection rate curve change in real-time.
 
-4. **Reactive Simulation** Adjust parameters (*Bot Ratio, Influence Alpha, Agent Count*) on the fly and watch the "Belief Heatmap" evolve instantly in real-time to visualize the spread of misinformation.
+### Cognitive Editor & Vision Guard (Multimodal)
+* **Vision Guard:** Upload **Images, Memes, or Screenshots**. The AI "sees" the image, analyzes visual symbolism/text, and detects manipulative patterns or fallacies.
+* **Auto-Sanitize:** The system doesn't just flag errors; it **rewrites** toxic or fallacious text into a neutral, logical, and factual version.
+* **Fact Extraction:** Automatically extracts a bulleted list of factual claims from Text, PDFs, or Images that require external verification.
+* **Document Analysis:** Upload full **PDF documents** (contracts, articles, political programs) for deep logical scanning.
 
-5. **Enterprise Reporting** Generate professional, paginated **PDF Reports** containing executive summaries, fallacy distribution charts, word clouds, and detailed line-by-line analysis for research or journalism.
+### Enterprise Reporting
+* **Hybrid Truth Engine:** Powered by **Google Gemini 2.0 Flash**, performing a 3-layer deep scan (Logical Validity, Factual Accuracy, Emotional Spectrum).
+* **Bot Hunter:** Heuristic detection of coordinated inauthentic behavior and spam bots.
+* **Export Ready:** Generate professional **Excel** datasets or paginated **PDF Reports** containing executive summaries, fallacy distribution charts, and word clouds for research or journalism.
 
 ### How to Run Locally
 
@@ -89,5 +99,6 @@ We have developed a real-time web interface to interact with the models and visu
 ## Contributing
 
 This is an experimental research project. We welcome forks, pull requests, and alternative modeling approaches to challenge our parameters.
+
 
 
