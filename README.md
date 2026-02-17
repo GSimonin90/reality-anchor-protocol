@@ -64,6 +64,7 @@ We have developed a real-time web interface to interact with the models and visu
 
 ### Cognitive Editor & Vision Guard (Multimodal)
 * **Vision Guard:** Upload **Images, Memes, or Screenshots**. The AI "sees" the image, analyzes visual symbolism/text, and detects manipulative patterns or fallacies.
+* **Voice Intel:** Upload **Audio files (MP3, WAV, M4A)**. The AI "listens" to the speech, analyzing **Tone, Prosody, and Emotion** to detect sarcasm, hesitation, or aggression that text analysis misses.
 * **Auto-Sanitize:** The system doesn't just flag errors; it **rewrites** toxic or fallacious text into a neutral, logical, and factual version.
 * **Fact Extraction:** Automatically extracts a bulleted list of factual claims from Text, PDFs, or Images that require external verification.
 * **Document Analysis:** Upload full **PDF documents** (contracts, articles, political programs) for deep logical scanning.
@@ -99,6 +100,7 @@ We have developed a real-time web interface to interact with the models and visu
 ## Contributing
 
 This is an experimental research project. We welcome forks, pull requests, and alternative modeling approaches to challenge our parameters.
+
 
 
 
