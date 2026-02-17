@@ -14,6 +14,7 @@ import random
 from math import pi
 from datetime import datetime, timedelta
 from google import genai
+from google.genai import types
 from PIL import Image
 import pypdf
 from youtube_comment_downloader import YoutubeCommentDownloader, SORT_BY_POPULAR
@@ -55,7 +56,6 @@ def get_cost_estimate():
 
 # --- HELPER: CALLBACK FOR DATA EDITOR ---
 def update_editor_state(method_key):
-    """Callback to sync data_editor changes to session_state safely."""
     editor_key = f"editor_{method_key}"
     if editor_key in st.session_state:
         new_data = st.session_state[editor_key]
@@ -152,70 +152,49 @@ def detect_bot_activity(df):
         df.loc[mask, 'bot_reason'] = df.loc[mask, 'bot_reason'].apply(lambda x: x + " High Frequency" if x else "High Frequency Spammer")
     return df
 
-# --- HELPER: TREND PROJECTION (ROBUST FIX) ---
+# --- HELPER: TREND PROJECTION ---
 @st.cache_data
 def project_trend(df, days_ahead=7):
-    """Calculates linear regression on aggression over time."""
     if 'timestamp' not in df.columns: return None, False
-    
     df_trend = df.copy()
-    # Coerce errors to NaT and drop them
     df_trend['timestamp'] = pd.to_datetime(df_trend['timestamp'], errors='coerce')
     df_trend = df_trend.dropna(subset=['timestamp']).sort_values('timestamp')
-    
     if len(df_trend) < 5: return None, False 
-    
     start_date = df_trend['timestamp'].min()
     df_trend['days_since_start'] = (df_trend['timestamp'] - start_date).dt.days
-    
     x = df_trend['days_since_start'].values
     y = df_trend['aggression'].values
-    
     if len(np.unique(x)) < 2: return None, False 
-    
     slope, intercept = np.polyfit(x, y, 1)
-    
     last_day = x.max()
-    # FIX: Ensure arange returns integers for timedelta
     future_days = np.arange(last_day + 1, last_day + days_ahead + 1).astype(int)
     forecast_y = slope * future_days + intercept
-    
     future_dates = [start_date + timedelta(days=int(d)) for d in future_days]
-    
     past_df = pd.DataFrame({'Date': df_trend['timestamp'], 'Aggression': y, 'Type': 'Historical'})
     future_df = pd.DataFrame({'Date': future_dates, 'Aggression': forecast_y, 'Type': 'Forecast'})
-    
     combined = pd.concat([past_df, future_df])
     is_escalating = slope > 0.05 
-    
     return combined, is_escalating
 
 # --- HELPER: STRATEGIC SUMMARY ---
 def generate_strategic_summary(df, api_key, context="", persona="Intelligence Analyst"):
     if df is None or df.empty: return None
-    
     flagged = df[df['has_fallacy']==True]
     bots = df[df['is_bot']==True]
-    
     fallacy_counts = flagged['fallacy_type'].value_counts().to_string() if not flagged.empty else "None"
-    top_targets = df['target'].value_counts().head(3).to_string() if 'target' in df.columns else "None"
     top_topics = df['main_topic'].value_counts().head(3).to_string() if 'main_topic' in df.columns else "None"
     top_emotion = df['primary_emotion'].mode()[0] if 'primary_emotion' in df.columns and not df['primary_emotion'].empty else "Unknown"
-    
     trend_msg = "Stable"
     if 'aggression' in df.columns and len(df) > 10:
         first_half = df['aggression'].iloc[:len(df)//2].mean()
         second_half = df['aggression'].iloc[len(df)//2:].mean()
         if second_half > first_half * 1.2: trend_msg = "ESCALATING (Crisis Risk)"
         elif second_half < first_half * 0.8: trend_msg = "De-escalating"
-
     bot_count = len(bots)
     avg_agg = df['aggression'].mean() if 'aggression' in df.columns else 0
-    
     prompt = f"""
     You are a {persona}. 
     CONTEXT TOPIC: "{context}"
-    
     Review data:
     - Avg Aggression: {avg_agg:.1f}/10
     - Trend: {trend_msg}
@@ -223,17 +202,8 @@ def generate_strategic_summary(df, api_key, context="", persona="Intelligence An
     - Bot Activity: {bot_count} items.
     - Fallacies: {fallacy_counts}
     - Topics: {top_topics}
-    
     TASK: Write a "Executive Briefing" (max 150 words) from the perspective of a {persona}.
-    
-    CRITICAL LANGUAGE RULE: 
-    - Write in the SAME LANGUAGE as the "CONTEXT TOPIC".
-    - If Italian -> Output ITALIAN.
-    
-    STRUCTURE:
-    1. **Overview**: Summary of topic.
-    2. **Insight**: Analysis based on your persona ({persona}).
-    3. **Forecast**: Trend assessment.
+    CRITICAL LANGUAGE RULE: Write in the SAME LANGUAGE as the "CONTEXT TOPIC".
     """
     try:
         client = genai.Client(api_key=api_key)
@@ -246,27 +216,20 @@ def generate_strategic_summary(df, api_key, context="", persona="Intelligence An
 # --- HELPER: ACTION DECK GENERATOR ---
 def generate_action_deck(df, action_type, api_key, context):
     if df is None or df.empty: return "No comments selected."
-    
-    comments_text = "\n".join([f"- {row['content']} (Fallacy: {row['has_fallacy']})" for _, row in df.iterrows()])
-    
+    comments_text = "\n".join([f"- {row['content']} (Issue: {row.get('fallacy_type', 'None')})" for _, row in df.iterrows()])
     prompts = {
         "Generate Counter-Narrative Thread": "Create a Twitter/X thread (3-5 tweets) that politely but firmly debunks the following comments using logic and facts. Tone: Professional but engaging.",
         "Draft Official Statement": "Write a formal Press Release or Official Statement addressing the concerns raised in these comments. Tone: Corporate, reassuring, authoritative.",
         "Legal Risk Assessment": "Analyze these comments for potential defamation, libel, or terms of service violations. Output a bulleted list of actionable legal or moderation steps.",
         "Engagement Strategy": "Suggest 3 specific replies to the most influential comments here to de-escalate the situation and win over the audience."
     }
-    
     prompt = f"""
     CONTEXT: {context}
     ACTION: {action_type}
-    
-    INPUT COMMENTS:
-    {comments_text[:15000]}
-    
+    INPUT COMMENTS: {comments_text[:15000]}
     INSTRUCTION: {prompts[action_type]}
     OUTPUT LANGUAGE: Same as input comments.
     """
-    
     try:
         client = genai.Client(api_key=api_key)
         response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
@@ -278,9 +241,7 @@ def generate_action_deck(df, action_type, api_key, context):
 # --- HELPER: THE ORACLE ---
 def ask_the_oracle(df, question, api_key, context):
     if df is None: return "No data to analyze."
-    
     subset = df[['agent_id', 'content', 'aggression', 'target', 'main_topic', 'archetype']].head(40).to_string()
-    
     prompt = f"""
     You are "The Oracle", an advanced intelligence system.
     CONTEXT: "{context}"
@@ -303,16 +264,13 @@ def generate_excel_report(df, summary_text):
         summary_data = [{'Metric': 'Analysis Date', 'Value': datetime.now().strftime('%Y-%m-%d %H:%M')}]
         if summary_text:
             summary_data.append({'Metric': 'Executive Briefing', 'Value': summary_text})
-        
         total = len(df)
         flagged = len(df[df['has_fallacy'] == True])
-        
         summary_data.extend([
             {'Metric': 'Total Items', 'Value': total},
             {'Metric': 'Flagged Issues', 'Value': flagged},
             {'Metric': 'Avg Aggression', 'Value': df['aggression'].mean() if 'aggression' in df.columns else 0}
         ])
-        
         pd.DataFrame(summary_data).to_excel(writer, sheet_name='Executive Briefing', index=False)
         df.to_excel(writer, sheet_name='Full Analysis', index=False)
     return output.getvalue()
@@ -430,56 +388,27 @@ def normalize_dataframe(df):
 # --- HELPER: HYBRID ANALYZER ---
 @st.cache_data(show_spinner=False)
 def analyze_fallacies_cached(text, api_key, context_info="", persona="Logic & Fact Analysis Engine"):
-    if not text or len(str(text)) < 3: return None
+    if not text or len(str(text)) < 3: return sanitize_response(None)
     for attempt in range(3):
         try:
             client = genai.Client(api_key=api_key)
             is_long = len(text) > 2000
-            
             common_instructions = f"""
-            You are a {persona}.
-            CONTEXT (Global): "{context_info}"
-            
-            *** CRITICAL INSTRUCTION: LANGUAGE FORCE ***
-            1. **DETECT LANGUAGE**: Identify the language of the 'Text'.
-            2. **TRANSLATE EVERYTHING**: Translate 'explanation', 'correction', 'counter_reply' AND CATEGORICAL VALUES (Archetype, Emotion) into the DETECTED LANGUAGE.
-            3. **FORBIDDEN**: Do NOT output English explanations/labels if the input is Italian/Spanish etc.
-            
+            You are a {persona}. CONTEXT: "{context_info}"
+            CRITICAL: 1. DETECT LANGUAGE. 2. TRANSLATE ALL OUTPUTS (labels, explanations) TO THAT LANGUAGE.
             TASKS:
-            - **explanation**: If Green, PROVIDE A BRIEF ANALYSIS of the content (e.g. "Valid expression of opinion", "Factual statement") - Translated. DO NOT just write "Reasoning valid".
-            - **main_topic**: Central theme (2-3 words, Translated).
-            - **micro_topic**: 1-2 keywords summarizing the core idea (e.g. "Climate Denial", "Pricing Complaint") - Translated.
-            - **target**: Target Entity.
-            - **primary_emotion**: Select one: [Anger, Fear, Disgust, Sadness, Joy, Surprise, Neutral] -> TRANSLATE VALUE TO INPUT LANGUAGE.
-            - **archetype**: Select one: [Instigator, Loyalist, Troll, Rational Skeptic, Observer] -> TRANSLATE VALUE TO INPUT LANGUAGE.
-            
-            RULES:
-            1. **OPINIONS**: Taste/Praise -> 'has_fallacy': false.
-            2. **SARCASM**: Sarcasm -> 'has_fallacy': false.
-            
+            - explanation: Brief Analysis (Translated).
+            - main_topic: Central theme (Translated).
+            - micro_topic: 1-2 keywords (Translated).
+            - target: Target Entity.
+            - primary_emotion: [Anger, Fear, Disgust, Sadness, Joy, Surprise, Neutral] (Translated).
+            - archetype: [Instigator, Loyalist, Troll, Rational Skeptic, Observer] (Translated).
+            RULES: Opinions/Sarcasm -> 'has_fallacy': false.
             RESPONSE (Strict JSON):
-            {{ 
-                "has_fallacy": true/false, 
-                "fallacy_type": "Translated Name (e.g. Argomento Fantoccio)", 
-                "explanation": "MANDATORY: Detailed Analysis in INPUT LANGUAGE.", 
-                "correction": "Correction (if needed)",
-                "main_topic": "Theme",
-                "micro_topic": "Micro-Topic",
-                "target": "Target",
-                "primary_emotion": "Emotion",
-                "archetype": "Archetype",
-                "relevance": "Relevance",
-                "counter_reply": "Reply",
-                "sentiment": "Sentiment",
-                "aggression": 0-10
-            }}
+            {{ "has_fallacy": bool, "fallacy_type": "Name", "explanation": "Text", "correction": "Text", "main_topic": "Text", "micro_topic": "Text", "target": "Text", "primary_emotion": "Text", "archetype": "Text", "relevance": "Text", "counter_reply": "Text", "sentiment": "Text", "aggression": 0-10 }}
             """
-
-            if is_long:
-                prompt = f"Analyze LONG DOCUMENT.\n{common_instructions}\nText: \"{text[:15000]}...\""
-            else:
-                prompt = f"Analyze Text.\n{common_instructions}\nText: \"{text}\""
-                
+            if is_long: prompt = f"Analyze LONG.\n{common_instructions}\nText: \"{text[:15000]}...\""
+            else: prompt = f"Analyze Text.\n{common_instructions}\nText: \"{text}\""
             response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
             result = extract_json(response.text)
             if result: return sanitize_response(result)
@@ -494,10 +423,13 @@ def analyze_fallacies(text, api_key=None, context_info="", persona="Logic & Fact
     increment_counter(len(text), 500)
     return res
 
-# --- HELPER: COGNITIVE EDITOR ---
-@st.cache_data(show_spinner=False)
-def cognitive_rewrite(text, api_key, image_data=None):
-    if (not text or len(str(text)) < 3) and not image_data: return None
+# --- HELPER: COGNITIVE EDITOR (MULTIMODAL: TEXT, IMAGE, AUDIO) ---
+def cognitive_rewrite(text, api_key, media_data=None, media_type="image"):
+    """
+    Handles Text, Images (PIL), and Audio (Bytes).
+    media_type: 'image' or 'audio'
+    """
+    if (not text or len(str(text)) < 3) and not media_data: return None
     try:
         client = genai.Client(api_key=api_key)
         
@@ -505,21 +437,21 @@ def cognitive_rewrite(text, api_key, image_data=None):
         You are a "Cognitive Editor", "Logic Guard", and "Fact Checker".
         
         TASK:
-        1. **DIAGNOSE**: Check for Logical Fallacies, Aggression, AND FACTUAL ERRORS (especially in the image if provided).
-        2. **REWRITE**: Create a neutral, logical, and factual version (describe the neutral meaning if image).
+        1. **DIAGNOSE**: Check for Logical Fallacies, Aggression, TONE (if audio), and FACTUAL ERRORS.
+        2. **REWRITE**: Create a neutral, logical, and factual version.
         3. **EXTRACT FACTS**: List claims to verify.
         
         CRITICAL RULES:
-        1. **FACTUAL ERRORS ARE ISSUES**: If the text contains an objectively false statement, set "has_fallacy": true and "fallacy_type": "Errore Fattuale".
-        2. **LOGIC**: Flag standard fallacies.
+        1. **FACTUAL ERRORS ARE ISSUES**: If content contains an objectively false statement, set "has_fallacy": true and "fallacy_type": "Errore Fattuale".
+        2. **AUDIO ANALYSIS**: If audio is provided, analyze Tone, Prosody, and Emotion. Note sarcasm or hesitation.
         3. **LANGUAGE**: Output strictly in the INPUT LANGUAGE.
         
         RESPONSE (Strict JSON):
         {{
             "has_fallacy": true/false,
             "fallacy_type": "Name or None",
-            "explanation": "Analysis",
-            "rewritten_text": "Sanitized text",
+            "explanation": "Analysis (include Tone for audio)",
+            "rewritten_text": "Sanitized text / Transcript summary",
             "facts": ["Claim 1", "Claim 2"],
             "aggression": 0-10
         }}
@@ -527,14 +459,22 @@ def cognitive_rewrite(text, api_key, image_data=None):
         
         contents = [prompt_text]
         if text: contents.append(f"Input Text: {text[:10000]}")
-        if image_data: contents.append(image_data)
         
-        response = client.models.generate_content(model='gemini-2.5-flash', contents=contents)
+        # Handle Multimodal Inputs
+        if media_data:
+            if media_type == "image":
+                contents.append(media_data) # PIL Image object directly supported
+            elif media_type == "audio":
+                # Audio bytes handled differently depending on SDK version
+                # For google-genai (v0.1+), simpler part construction
+                contents.append(types.Part.from_bytes(data=media_data, mime_type="audio/mp3"))
+
+        response = client.models.generate_content(model='gemini-2.0-flash', contents=contents)
         increment_counter(len(str(contents)), len(response.text))
         res = extract_json(response.text)
         return sanitize_response(res)
-    except:
-        return sanitize_response(None)
+    except Exception as e:
+        return {"explanation": f"Error processing media: {str(e)}", "has_fallacy": True}
 
 # --- VISUALIZATION HELPERS ---
 def plot_radar_chart(df):
@@ -572,11 +512,16 @@ st.title("RAP: Reality Anchor Protocol")
 st.markdown("### Cognitive Security & Logical Analysis Suite")
 st.markdown("---")
 
-mode = st.sidebar.radio("Select Module:", ["Wargame Room (Simulation)", "Social Data Analysis (Universal)", "Comparison Test (A/B Testing)", "Cognitive Editor (Logic Guard)"])
+# ORDERED MODULES
+mode = st.sidebar.radio("Select Module:", [
+    "1. Wargame Room (Simulation)", 
+    "2. Social Data Analysis (Universal)", 
+    "3. Cognitive Editor (Text/Image/Audio)", 
+    "4. Comparison Test (A/B Testing)"
+])
 
 # --- DISCLAIMER & METRICS ---
 st.sidebar.markdown("---")
-# SECURE KEY HANDLING
 if "GEMINI_API_KEY" in st.secrets:
     key = st.secrets["GEMINI_API_KEY"]
     st.sidebar.success("API Key loaded securely")
@@ -587,20 +532,13 @@ toks, cost = get_cost_estimate()
 st.sidebar.caption(f"Session Usage: ~{int(toks)} tokens")
 st.sidebar.caption(f"Est. Cost: ${cost:.4f}")
 
-with st.sidebar.expander("ℹ️ System Capabilities & Limits", expanded=False):
+with st.sidebar.expander("ℹ️ Capabilities", expanded=False):
     st.markdown("""
-    **What this system CAN do:**
-    - Detect logical fallacies.
-    - Analyze sentiment, aggression, and archetypes.
-    - Rewrite toxic content (Logic Guard).
-    - Simulate network effects (Wargame).
-    - Analyze Images (Vision Guard).
-    
-    **Blind Spots:**
-    - **Recent Events:** Knowledge cutoff.
-    - **Hallucinations:** AI can make errors. 
-    
-    *Always verify critical claims independently.*
+    **System Capabilities:**
+    - **Text/Social:** Analysis of fallacies, bots, and trends.
+    - **Vision:** Analysis of memes/screenshots.
+    - **Audio:** Tone & logic analysis of speech.
+    - **Simulation:** Real-time info-war games.
     """)
 
 st.sidebar.markdown("---")
@@ -608,8 +546,8 @@ st.sidebar.markdown("---")
 # ==========================================
 # MODULE 1: WARGAME ROOM (SIMULATION)
 # ==========================================
-if mode == "Wargame Room (Simulation)":
-    st.header("Information Warfare Simulator")
+if mode == "1. Wargame Room (Simulation)":
+    st.header("1. Information Warfare Simulator")
     
     c_param1, c_param2 = st.columns(2)
     with c_param1:
@@ -622,7 +560,6 @@ if mode == "Wargame Room (Simulation)":
         defense = st.selectbox("Active Defense Protocol", ["None (Control Group)", "Fact-Check Debunking (Targeted)", "Algorithmic Dampening (Global)", "Hard Ban (Removal)"])
         steps = st.slider("Simulation Duration (Days)", 50, 300, 100)
         
-    # REAL-TIME EXECUTION
     agents = np.zeros(n_agents)
     n_infected = int(n_agents * bot_pct)
     if topology == "Echo Chambers (Clusters)":
@@ -637,15 +574,9 @@ if mode == "Wargame Room (Simulation)":
     infection_rate = []
     current = agents.copy()
     
-    if topology == "Public Square (High Connectivity)":
-        influence_strength = 0.05
-        noise_level = 0.02
-    elif topology == "Echo Chambers (Clusters)":
-        influence_strength = 0.15
-        noise_level = 0.01
-    else:
-        influence_strength = 0.03
-        noise_level = 0.01
+    if topology == "Public Square (High Connectivity)": influence_strength, noise_level = 0.05, 0.02
+    elif topology == "Echo Chambers (Clusters)": influence_strength, noise_level = 0.15, 0.01
+    else: influence_strength, noise_level = 0.03, 0.01
         
     for t in range(1, steps):
         prev = current.copy()
@@ -697,27 +628,26 @@ if mode == "Wargame Room (Simulation)":
 # ==========================================
 # MODULE 2: SOCIAL DATA ANALYSIS
 # ==========================================
-elif mode == "Social Data Analysis (Universal)":
+elif mode == "2. Social Data Analysis (Universal)":
+    st.header("2. Social Data Analysis")
     st.sidebar.header("Settings")
     persona = st.sidebar.selectbox("Analysis Lens (Persona)", ["Strategic Intelligence Analyst", "Mass Psychologist (Emotional)", "Legal Consultant (Defamation/Risk)", "Campaign Manager (Opportunity)"])
     
     input_method = st.sidebar.radio("Input Method:", ["CSV File Upload", "YouTube Link", "Raw Text Paste"], horizontal=True)
     st.markdown("---")
     context_input = st.text_input("Global Context (Optional)", placeholder="E.g., 'Discussion about Flat Earth'")
-    st.caption("Provide context to help AI understand sarcasm and specific facts.")
     st.markdown("---")
 
     current_storage = st.session_state['data_store'][input_method]
     
     if input_method == "CSV File Upload":
         st.info("Desktop: Use 'Instant Data Scraper' extension.")
-        # --- RESTORED INSTRUCTIONS BLOCK ---
         with st.expander("📝 How to extract data from Facebook, X (Twitter), Instagram"):
             st.markdown("Social media platforms do not allow direct downloading. You need a **Browser Extension**.")
-            st.markdown("#### 🚀 Recommended Tools:")
+            st.markdown("#### Recommended Tools:")
             st.markdown("1. **[Instant Data Scraper](https://chromewebstore.google.com/detail/instant-data-scraper/ofaokhiedipichpaobibbnahnkdoiiah)** (Free & Unlimited)\n*Best for lists of comments or posts. Easy to use (Pokeball icon).*")
             st.markdown("2. **[Export Comments](https://exportcomments.com/)** (Freemium)\n*Easiest for specific posts, but has limits on the free plan.*")
-            st.markdown("#### 👣 Step-by-Step Guide:")
+            st.markdown("#### Step-by-Step Guide:")
             st.markdown("1. Install one of the extensions above on Chrome/Edge.")
             st.markdown("2. Go to the post you want to analyze.")
             st.markdown("3. **Crucial:** Scroll down to load all comments *before* starting the extension.")
@@ -809,7 +739,6 @@ elif mode == "Social Data Analysis (Universal)":
 
             with st.form("analysis_exec_form"):
                 c_form1, c_form2 = st.columns([1, 4])
-                
                 if isinstance(current_df, pd.DataFrame) and 'Select' in current_df.columns:
                     selected_rows = current_df[current_df.Select]
                     has_selection = not selected_rows.empty
@@ -819,12 +748,11 @@ elif mode == "Social Data Analysis (Universal)":
 
                 with c_form1:
                     if not has_selection:
-                        scan_rows = st.number_input("Max Rows", min_value=1, max_value=len(df), value=min(20, len(df)), step=1)
+                        scan_rows = st.number_input("Max Rows to Analyze", min_value=1, max_value=len(df), value=min(20, len(df)), step=1)
                         if scan_rows > 100: st.warning("⚠️ High volume analysis")
                     else:
                         st.info(f"Manual Mode: {len(selected_rows)} selected.")
                         scan_rows = 0 
-                    
                     btn_label = f"RUN ANALYSIS ON SELECTED ({len(selected_rows)})" if has_selection else "RUN ANALYSIS"
                     run_submitted = st.form_submit_button(btn_label, disabled=not key, type="primary")
 
@@ -856,19 +784,9 @@ elif mode == "Social Data Analysis (Universal)":
 
             if analyzed_df is not None:
                 st.markdown('<div id="briefing_anchor"></div>', unsafe_allow_html=True)
-                
                 if st.session_state.get('scroll_to_top'):
                     components.html(
-                        """
-                        <script>
-                            setTimeout(function() {
-                                var element = window.parent.document.getElementById("briefing_anchor");
-                                if (element) {
-                                    element.scrollIntoView({behavior: "smooth", block: "start"});
-                                }
-                            }, 800); 
-                        </script>
-                        """,
+                        """<script>setTimeout(function() {var element = window.parent.document.getElementById("briefing_anchor");if (element) {element.scrollIntoView({behavior: "smooth", block: "start"});}}, 800);</script>""",
                         height=0
                     )
                     st.session_state['scroll_to_top'] = False
@@ -886,7 +804,22 @@ elif mode == "Social Data Analysis (Universal)":
                 
                 # --- ACTION DECK ---
                 st.markdown("---")
-                st.subheader("📢 Response Strategy & Action Deck")
+                st.subheader("Response Strategy & Action Deck")
+                st.caption("1. Select comments below. 2. Choose an action. 3. Generate.")
+                
+                if 'Select' not in adf.columns: adf.insert(0, "Select", False)
+                action_view = adf[['Select', 'content', 'fallacy_type', 'aggression']].copy()
+                edited_action_df = st.data_editor(
+                    action_view,
+                    column_config={
+                        "Select": st.column_config.CheckboxColumn(required=True),
+                        "content": st.column_config.TextColumn("Comment Content", width="large"),
+                        "fallacy_type": st.column_config.TextColumn("Issue"),
+                        "aggression": st.column_config.NumberColumn("Agg", width="small")
+                    },
+                    key="action_selector_table", height=200, hide_index=True
+                )
+
                 action_col1, action_col2 = st.columns([3, 1])
                 with action_col1:
                     action_type = st.selectbox("Select Action Type", [
@@ -901,21 +834,14 @@ elif mode == "Social Data Analysis (Universal)":
                     gen_action = st.button("Generate Strategy", type="primary")
                 
                 if gen_action:
-                    # FIX: Force re-read selection from session state to ensure sync
-                    current_sync_df = st.session_state['data_store'][input_method]['df']
-                    if isinstance(current_sync_df, pd.DataFrame) and 'Select' in current_sync_df.columns:
-                        selected_for_action = current_sync_df[current_sync_df.Select]
-                    else:
-                        selected_for_action = pd.DataFrame()
-                        
+                    selected_for_action = edited_action_df[edited_action_df.Select]
                     if not selected_for_action.empty:
                         with st.spinner("Generating..."):
                             action_plan = generate_action_deck(selected_for_action, action_type, key, context_input)
                             st.success("Action Plan Ready:")
                             st.text_area("Strategy Output:", value=action_plan, height=300)
                             st.download_button("Download Strategy", action_plan, "strategy.txt")
-                    else:
-                        st.warning("Please select comments in the Data Explorer below.")
+                    else: st.warning("Please select at least one comment in the table above.")
 
                 st.markdown("---")
                 with st.expander("📊 Open Intelligence Visuals (Radar, Heatmap & Targets)", expanded=False):
@@ -934,18 +860,9 @@ elif mode == "Social Data Analysis (Universal)":
                             top_clusters = adf['micro_topic'].value_counts().reset_index().head(10)
                             top_clusters.columns = ['Cluster', 'Count']
                             chart_cluster = alt.Chart(top_clusters).mark_bar().encode(
-                                x='Count', y=alt.Y('Cluster', sort='-x'), 
-                                color=alt.Color('Cluster', legend=None)
+                                x='Count', y=alt.Y('Cluster', sort='-x'), color=alt.Color('Cluster', legend=None)
                             ).properties(height=300)
                             st.altair_chart(chart_cluster, use_container_width=True)
-                        elif 'main_topic' in adf.columns:
-                            top_topics = adf['main_topic'].value_counts().reset_index().head(10)
-                            top_topics.columns = ['Topic', 'Count']
-                            chart_topic = alt.Chart(top_topics).mark_bar().encode(
-                                x='Count', y=alt.Y('Topic', sort='-x'), color=alt.Color('Topic', legend=None)
-                            ).properties(height=300)
-                            st.altair_chart(chart_topic, use_container_width=True)
-
                     with c_intel2:
                         st.caption("User Archetypes")
                         if 'archetype' in adf.columns:
@@ -982,13 +899,11 @@ elif mode == "Social Data Analysis (Universal)":
                     else:
                         st.caption("Sequence Trend (No valid dates found)")
                         adf['Sequence'] = adf.index
-                        line = alt.Chart(adf).mark_line(color='orange').encode(
-                            x='Sequence', y='aggression', tooltip=['content', 'aggression']
-                        )
+                        line = alt.Chart(adf).mark_line(color='orange').encode(x='Sequence', y='aggression', tooltip=['content', 'aggression'])
                         st.altair_chart(line, use_container_width=True)
 
                 st.markdown("---")
-                st.subheader("Data Explorer")
+                st.subheader("Detailed Data Explorer")
                 c_filter1, c_filter2, c_filter3 = st.columns(3)
                 with c_filter1:
                     filter_fallacy = st.multiselect("Filter by Issue Type", adf['fallacy_type'].unique())
@@ -1039,7 +954,6 @@ elif mode == "Social Data Analysis (Universal)":
                 
                 st.markdown("---")
                 st.subheader("The Oracle (Chat with Data)")
-                st.caption("Ask questions about the analyzed data.")
                 for message in st.session_state.oracle_history:
                     with st.chat_message(message["role"]):
                         st.markdown(message["content"])
@@ -1056,78 +970,22 @@ elif mode == "Social Data Analysis (Universal)":
             st.error("Data integrity check failed. Please reload the file.")
 
 # ==========================================
-# MODULE 4: COMPARISON TEST (A/B TESTING)
+# MODULE 3: COGNITIVE EDITOR (MULTIMODAL)
 # ==========================================
-elif mode == "Comparison Test (A/B Testing)":
-    st.header("Comparison Test (A/B Testing)")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.subheader("Dataset A")
-        url_a = st.text_input("YouTube URL A", key="url_a")
-    with col_b:
-        st.subheader("Dataset B")
-        url_b = st.text_input("YouTube URL B", key="url_b")
-    limit_ab = st.number_input("Max Comments per Video", 10, 500, 50)
+elif mode == "3. Cognitive Editor (Text/Image/Audio)":
+    st.header("3. Cognitive Editor & Fact-Checker")
+    st.caption("Upload Text, Images (Memes/Screenshots), or Audio clips.")
     
-    if "GEMINI_API_KEY" in st.secrets: key = st.secrets["GEMINI_API_KEY"]
-    else: key = st.text_input("API Key", type="password")
-    
-    if st.button("Compare A vs B"):
-        if url_a and url_b and key:
-            with st.spinner("Analyzing Contender A..."):
-                df_a = scrape_youtube_comments(url_a, limit_ab)
-                if df_a is not None:
-                    res_a = []
-                    for i, (_, row) in enumerate(df_a.iterrows()):
-                        res_a.append(analyze_fallacies(row['content'], api_key=key))
-                    df_a = pd.concat([df_a.reset_index(drop=True), pd.DataFrame(res_a)], axis=1)
-            with st.spinner("Analyzing Contender B..."):
-                df_b = scrape_youtube_comments(url_b, limit_ab)
-                if df_b is not None:
-                    res_b = []
-                    for i, (_, row) in enumerate(df_b.iterrows()):
-                        res_b.append(analyze_fallacies(row['content'], api_key=key))
-                    df_b = pd.concat([df_b.reset_index(drop=True), pd.DataFrame(res_b)], axis=1)
-            
-            if df_a is not None and df_b is not None:
-                st.divider()
-                st.subheader("Match Results")
-                c1, c2, c3 = st.columns(3)
-                agg_a = df_a['aggression'].mean()
-                agg_b = df_b['aggression'].mean()
-                delta_agg = agg_a - agg_b
-                bots_a = len(df_a[df_a['is_bot']==True])
-                bots_b = len(df_b[df_b['is_bot']==True])
-                delta_bots = bots_a - bots_b
-                fallacy_a = len(df_a[df_a['has_fallacy']==True])
-                fallacy_b = len(df_b[df_b['has_fallacy']==True])
-                c1.metric("Avg Aggression (A vs B)", f"{agg_a:.1f} vs {agg_b:.1f}", f"{delta_agg:.1f}")
-                c2.metric("Bot Count (A vs B)", f"{bots_a} vs {bots_b}", f"{delta_bots}")
-                c3.metric("Fallacies (A vs B)", f"{fallacy_a} vs {fallacy_b}")
-                st.subheader("Aggression Comparison")
-                df_a['Source'] = 'Dataset A'
-                df_b['Source'] = 'Dataset B'
-                combined = pd.concat([df_a, df_b])
-                chart = alt.Chart(combined).mark_bar().encode(
-                    x=alt.X('Source', title=None),
-                    y=alt.Y('mean(aggression)', title='Avg Aggression'),
-                    color='Source'
-                ).properties(height=300)
-                st.altair_chart(chart, use_container_width=True)
-        else:
-            st.error("Please provide both URLs and API Key.")
-
-# ==========================================
-# MODULE 3: COGNITIVE EDITOR (LOGIC GUARD)
-# ==========================================
-elif mode == "Cognitive Editor (Logic Guard)":
-    st.header("Cognitive Editor & Fact-Checker")
     c1, c2 = st.columns([1, 1])
+    
     with c1:
         st.subheader("Input")
-        inp_type = st.radio("Input Type:", ["Text", "PDF", "Image (Vision Guard)"], horizontal=True)
+        inp_type = st.radio("Input Type:", ["Text", "PDF", "Image (Vision Guard)", "Audio (Voice Intel)"], horizontal=True)
+        
         text_inp = None
-        image_inp = None
+        media_inp = None
+        media_type = "text"
+        
         if inp_type == "Text":
             text_inp = st.text_area("Paste Text Here", height=300)
         elif inp_type == "PDF":
@@ -1135,19 +993,29 @@ elif mode == "Cognitive Editor (Logic Guard)":
             if f:
                 text_inp = extract_text_from_pdf(f)
                 st.success(f"Loaded {len(text_inp)} chars from PDF")
-        else:
-            img_file = st.file_uploader("Upload Image", type=['png', 'jpg', 'jpeg'])
-            if img_file:
-                image_inp = Image.open(img_file)
-                st.image(image_inp, caption="Uploaded Image", use_container_width=True)
+        elif inp_type == "Image (Vision Guard)":
+            f = st.file_uploader("Upload Image", type=['png', 'jpg', 'jpeg'])
+            if f:
+                media_inp = Image.open(f)
+                media_type = "image"
+                st.image(media_inp, caption="Uploaded Image", use_container_width=True)
+        elif inp_type == "Audio (Voice Intel)":
+            f = st.file_uploader("Upload Audio", type=['mp3', 'wav', 'm4a'])
+            if f:
+                media_inp = f.read() # Read bytes
+                media_type = "audio"
+                st.audio(media_inp, format='audio/mp3')
+            
         go = st.button("Analyze & Sanitize", use_container_width=True)
 
     with c2:
         st.subheader("Output (Analysis & Sanitize)")
         if go:
-            if (text_inp) or (image_inp):
-                with st.spinner("Processing with Gemini Vision/Text..."):
-                    ret = cognitive_rewrite(text_inp, key, image_inp)
+            if (text_inp) or (media_inp):
+                with st.spinner(f"Processing with Gemini ({inp_type})..."):
+                    # Call multimodal function
+                    ret = cognitive_rewrite(text_inp, key, media_inp, media_type)
+                    
                     if ret:
                         if ret.get('has_fallacy'):
                             st.error(f"🛑 Issue Detected: **{ret['fallacy_type']}**")
@@ -1156,8 +1024,9 @@ elif mode == "Cognitive Editor (Logic Guard)":
                         else:
                             st.success("✅ Neural Guard: No major issues detected.")
                             st.info(f"**Analysis:** {ret.get('explanation', 'Content is sound.')}")
+                        
                         st.markdown("---")
-                        st.markdown("#### Rewritten Version (Neutral)")
+                        st.markdown("#### Rewritten Version / Transcript Summary")
                         st.success(ret.get('rewritten_text', 'No rewrite available.'))
                         st.markdown("---")
                         st.markdown("#### Fact Checker (Claims to Verify)")
@@ -1168,3 +1037,149 @@ elif mode == "Cognitive Editor (Logic Guard)":
                             st.caption("No specific factual claims found.")
             else:
                 st.warning("Please provide input.")
+
+# ==========================================
+# MODULE 4: COMPARISON TEST (A/B TESTING)
+# ==========================================
+elif mode == "4. Comparison Test (A/B Testing)":
+    st.header("4. Comparison Test (A/B Testing)")
+    
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.subheader("Dataset A (Left)")
+        url_a = st.text_input("YouTube URL A", key="url_a")
+    with col_b:
+        st.subheader("Dataset B (Right)")
+        url_b = st.text_input("YouTube URL B", key="url_b")
+    
+    limit_scrape = st.number_input("Raw Comments to Fetch", 10, 1000, 50, help="How many comments to download initially.")
+    
+    if "GEMINI_API_KEY" in st.secrets: key = st.secrets["GEMINI_API_KEY"]
+    else: key = st.text_input("API Key", type="password")
+
+    # --- STEP 1: SCRAPE ---
+    if st.button("Step 1: Fetch Comments (Scrape Only)", type="primary"):
+        if url_a and url_b:
+            with st.spinner("Fetching raw data from both videos..."):
+                df_a = scrape_youtube_comments(url_a, limit_scrape)
+                if df_a is not None:
+                    df_a = detect_bot_activity(df_a)
+                    df_a.insert(0, "Select", False)
+                    st.session_state['data_store']['Arena']['df_a'] = df_a
+                
+                df_b = scrape_youtube_comments(url_b, limit_scrape)
+                if df_b is not None:
+                    df_b = detect_bot_activity(df_b)
+                    df_b.insert(0, "Select", False)
+                    st.session_state['data_store']['Arena']['df_b'] = df_b
+                
+                st.session_state['data_store']['Arena']['analyzed_a'] = None
+                st.session_state['data_store']['Arena']['analyzed_b'] = None
+                st.rerun()
+        else:
+            st.error("Please provide both URLs.")
+
+    # --- DATA PREVIEW & SELECTION ---
+    df_a_raw = st.session_state['data_store']['Arena']['df_a']
+    df_b_raw = st.session_state['data_store']['Arena']['df_b']
+
+    if df_a_raw is not None and df_b_raw is not None:
+        st.divider()
+        st.markdown("### Step 2: Select Data to Analyze")
+        st.caption("Select specific comments to compare using the checkboxes. If none selected, the top N rows will be analyzed.")
+        
+        c_edit_a, c_edit_b = st.columns(2)
+        with c_edit_a:
+            st.markdown(f"**Contender A** ({len(df_a_raw)} items)")
+            edited_a = st.data_editor(
+                df_a_raw,
+                column_config={"Select": st.column_config.CheckboxColumn(required=True)},
+                disabled=["content", "agent_id", "timestamp", "is_bot", "likes"],
+                key="editor_arena_a", height=300, hide_index=True
+            )
+        with c_edit_b:
+            st.markdown(f"**Contender B** ({len(df_b_raw)} items)")
+            edited_b = st.data_editor(
+                df_b_raw,
+                column_config={"Select": st.column_config.CheckboxColumn(required=True)},
+                disabled=["content", "agent_id", "timestamp", "is_bot", "likes"],
+                key="editor_arena_b", height=300, hide_index=True
+            )
+
+        st.divider()
+        c_action, c_limit = st.columns([1, 1])
+        with c_limit:
+            max_analyze = st.number_input("Max Rows to Analyze (if no manual selection)", 5, 100, 20)
+        with c_action:
+            st.write("") 
+            st.write("") 
+            start_analysis = st.button("Step 3: Run Comparative Analysis", type="primary", disabled=not key)
+
+        if start_analysis:
+            # PREPARE DATASET A
+            subset_a = edited_a[edited_a.Select]
+            if subset_a.empty: subset_a = edited_a.head(max_analyze)
+            
+            # PREPARE DATASET B
+            subset_b = edited_b[edited_b.Select]
+            if subset_b.empty: subset_b = edited_b.head(max_analyze)
+
+            # EXECUTE ANALYSIS A
+            prog_a = st.progress(0)
+            res_a = []
+            st.markdown("**Analyzing Contender A...**")
+            for i, (_, row) in enumerate(subset_a.iterrows()):
+                res_a.append(analyze_fallacies(row['content'], api_key=key))
+                prog_a.progress((i + 1) / len(subset_a))
+            final_a = pd.concat([subset_a.reset_index(drop=True), pd.DataFrame(res_a)], axis=1)
+            st.session_state['data_store']['Arena']['analyzed_a'] = final_a
+
+            # EXECUTE ANALYSIS B
+            prog_b = st.progress(0)
+            res_b = []
+            st.markdown("**Analyzing Contender B...**")
+            for i, (_, row) in enumerate(subset_b.iterrows()):
+                res_b.append(analyze_fallacies(row['content'], api_key=key))
+                prog_b.progress((i + 1) / len(subset_b))
+            final_b = pd.concat([subset_b.reset_index(drop=True), pd.DataFrame(res_b)], axis=1)
+            st.session_state['data_store']['Arena']['analyzed_b'] = final_b
+            
+            st.rerun()
+
+    # --- RESULTS DISPLAY ---
+    res_df_a = st.session_state['data_store']['Arena']['analyzed_a']
+    res_df_b = st.session_state['data_store']['Arena']['analyzed_b']
+
+    if res_df_a is not None and res_df_b is not None:
+        st.divider()
+        st.header("Match Results")
+        
+        c1, c2, c3 = st.columns(3)
+        agg_a = res_df_a['aggression'].mean()
+        agg_b = res_df_b['aggression'].mean()
+        delta_agg = agg_a - agg_b
+        bots_a = len(res_df_a[res_df_a['is_bot']==True])
+        bots_b = len(res_df_b[res_df_b['is_bot']==True])
+        delta_bots = bots_a - bots_b
+        fallacy_a = len(res_df_a[res_df_a['has_fallacy']==True])
+        fallacy_b = len(res_df_b[res_df_b['has_fallacy']==True])
+        
+        c1.metric("Avg Aggression (A vs B)", f"{agg_a:.1f} vs {agg_b:.1f}", f"{delta_agg:.1f}")
+        c2.metric("Bot Count (A vs B)", f"{bots_a} vs {bots_b}", f"{delta_bots}")
+        c3.metric("Fallacies (A vs B)", f"{fallacy_a} vs {fallacy_b}")
+        
+        st.subheader("Visual Comparison")
+        res_df_a['Source'] = 'Contender A'
+        res_df_b['Source'] = 'Contender B'
+        combined = pd.concat([res_df_a, res_df_b])
+        
+        chart = alt.Chart(combined).mark_bar().encode(
+            x=alt.X('Source', title=None),
+            y=alt.Y('mean(aggression)', title='Avg Aggression'),
+            color=alt.Color('Source', scale=alt.Scale(domain=['Contender A', 'Contender B'], range=['#3b82f6', '#f97316'])),
+            tooltip=['Source', 'mean(aggression)']
+        ).properties(height=300)
+        st.altair_chart(chart, use_container_width=True)
+        
+        with st.expander("Detailed Comparison Data"):
+            st.dataframe(combined[['Source', 'content', 'aggression', 'fallacy_type', 'is_bot']])
