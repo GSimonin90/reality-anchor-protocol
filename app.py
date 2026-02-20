@@ -15,12 +15,13 @@ from math import pi
 from datetime import datetime, timedelta
 from google import genai
 from google.genai import types
-from PIL import Image
+from PIL import Image, ExifTags
 import pypdf
 from youtube_comment_downloader import YoutubeCommentDownloader, SORT_BY_POPULAR
 from fpdf import FPDF
 from wordcloud import WordCloud
 import streamlit.components.v1 as components
+import feedparser
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -33,6 +34,7 @@ st.set_page_config(
 if 'api_calls' not in st.session_state: st.session_state['api_calls'] = 0
 if 'token_usage' not in st.session_state: st.session_state['token_usage'] = 0
 if 'oracle_history' not in st.session_state: st.session_state['oracle_history'] = []
+if 'doc_oracle_history' not in st.session_state: st.session_state['doc_oracle_history'] = []
 if 'scroll_to_top' not in st.session_state: st.session_state['scroll_to_top'] = False
 
 if 'data_store' not in st.session_state:
@@ -40,7 +42,8 @@ if 'data_store' not in st.session_state:
         'CSV File Upload': {'df': None, 'analyzed': None, 'summary': None},
         'YouTube Link': {'df': None, 'analyzed': None, 'summary': None},
         'Raw Text Paste': {'df': None, 'analyzed': None, 'summary': None},
-        'Arena': {'df_a': None, 'df_b': None, 'analyzed_a': None, 'analyzed_b': None}
+        'Arena': {'df_a': None, 'df_b': None, 'analyzed_a': None, 'analyzed_b': None},
+        'Radar': {'df': None, 'analyzed': None}
     }
 
 def increment_counter(input_text_len=0, output_text_len=0):
@@ -106,7 +109,9 @@ def sanitize_response(data):
         "sentiment": "Neutral",
         "aggression": 0,
         "rewritten_text": "Nessuna riscrittura necessaria.",
-        "facts": []
+        "facts": [],
+        "ai_generated_probability": 0,
+        "ai_analysis": "Analisi AI non effettuata."
     }
     
     for key, default_val in defaults.items():
@@ -238,7 +243,7 @@ def generate_action_deck(df, action_type, api_key, context):
     except Exception as e:
         return f"Error generating action: {str(e)}"
 
-# --- HELPER: THE ORACLE ---
+# --- HELPER: THE ORACLE (GENERAL) ---
 def ask_the_oracle(df, question, api_key, context):
     if df is None: return "No data to analyze."
     subset = df[['agent_id', 'content', 'aggression', 'target', 'main_topic', 'archetype']].head(40).to_string()
@@ -256,6 +261,32 @@ def ask_the_oracle(df, question, api_key, context):
         return response.text
     except Exception as e:
         return f"Oracle Error: {str(e)}"
+
+# --- HELPER: DOCUMENT ORACLE (RAG) ---
+def ask_document_oracle(full_text, question, api_key):
+    prompt = f"""
+    You are the "Deep Document Oracle", an AI capable of analyzing massive documents.
+    I will provide you with the full text of one or more documents.
+    
+    USER QUESTION: "{question}"
+    
+    INSTRUCTIONS:
+    - Answer the question comprehensively based ONLY on the provided text.
+    - If the text does not contain the answer, say so clearly.
+    - Quote specific parts of the text to back up your claims when possible.
+    - Respond in the language of the user's question.
+    
+    DOCUMENT TEXT:
+    {full_text}
+    """
+    try:
+        client = genai.Client(api_key=api_key)
+        # Using Gemini 2.0 Flash for its massive context window
+        response = client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
+        increment_counter(len(prompt), len(response.text))
+        return response.text
+    except Exception as e:
+        return f"Document Oracle Error: {str(e)}"
 
 # --- HELPER: EXCEL & PDF ---
 def generate_excel_report(df, summary_text):
@@ -395,7 +426,7 @@ def analyze_fallacies_cached(text, api_key, context_info="", persona="Logic & Fa
             is_long = len(text) > 2000
             common_instructions = f"""
             You are a {persona}. CONTEXT: "{context_info}"
-            CRITICAL: 1. DETECT LANGUAGE. 2. TRANSLATE ALL OUTPUTS (labels, explanations) TO THAT LANGUAGE.
+            CRITICAL: 1. DETECT LANGUAGE. 2. TRANSLATE ALL OUTPUTS TO THAT LANGUAGE.
             TASKS:
             - explanation: Brief Analysis (Translated).
             - main_topic: Central theme (Translated).
@@ -423,50 +454,46 @@ def analyze_fallacies(text, api_key=None, context_info="", persona="Logic & Fact
     increment_counter(len(text), 500)
     return res
 
-# --- HELPER: COGNITIVE EDITOR (MULTIMODAL: TEXT, IMAGE, AUDIO) ---
+# --- HELPER: COGNITIVE EDITOR (MULTIMODAL + AI DETECTOR) ---
 def cognitive_rewrite(text, api_key, media_data=None, media_type="image"):
-    """
-    Handles Text, Images (PIL), and Audio (Bytes).
-    media_type: 'image' or 'audio'
-    """
     if (not text or len(str(text)) < 3) and not media_data: return None
     try:
         client = genai.Client(api_key=api_key)
         
         prompt_text = f"""
-        You are a strict "Fact Checker" and "Cognitive Editor".
+        You are a strict "Fact Checker", "Cognitive Editor", and "Deepfake/AI Detector".
         
         CRITICAL LOGIC FOR "has_fallacy":
-        - You must evaluate the USER'S INPUT TEXT.
+        - You must evaluate the USER'S INPUT TEXT and MEDIA.
         - If the user's input contains a false claim, historical inaccuracy, fake news, or logical fallacy -> YOU MUST RETURN "has_fallacy": true.
         - Only return "has_fallacy": false if the user's input is 100% factually and logically correct.
         
         RULES:
-        1. **FACT CHECKING**: If the input is false (e.g., "Che Guevara never got a degree"), set "has_fallacy": true, "fallacy_type": "Errore Fattuale", and use "explanation" to state the real facts.
-        2. **LANGUAGE**: Translate all JSON values to match the INPUT LANGUAGE (e.g., Italian).
+        1. **FACT CHECKING**: If the input is false, set "has_fallacy": true, "fallacy_type": "Errore Fattuale", and use "explanation" to state the real facts.
+        2. **AI DETECTION**: Analyze the input (text or image) for signs of AI generation. For text: look for repetitive LLM structures. For images: look for impossible geometry, weird hands, smoothed textures, or fake news overlays. Provide a probability (0-100) and reasoning.
         3. **AUDIO (if present)**: Analyze Tone and Prosody.
+        4. **LANGUAGE**: Translate all JSON values to match the INPUT LANGUAGE.
         
         RESPONSE (Strict JSON):
         {{
             "has_fallacy": true/false,
             "fallacy_type": "Name of fallacy or 'Errore Fattuale'",
-            "explanation": "Explain why the input text is false or true, citing real facts (in input language)",
-            "rewritten_text": "The corrected, factually accurate version (in input language)",
+            "explanation": "Explain why the input text is false or true, citing real facts",
+            "rewritten_text": "The corrected, factually accurate version",
             "facts": ["Claims verified"],
-            "aggression": 0-10
+            "aggression": 0-10,
+            "ai_generated_probability": 0-100,
+            "ai_analysis": "Reasoning for the AI probability score based on artifacts found"
         }}
         """
         
         contents = [prompt_text]
-        if text: contents.append(f"Input Text: {text[:10000]}")
+        if text: contents.append(f"Input Text/Context: {text[:10000]}")
         
-        # Handle Multimodal Inputs
         if media_data:
             if media_type == "image":
-                contents.append(media_data) # PIL Image object directly supported
+                contents.append(media_data) 
             elif media_type == "audio":
-                # Audio bytes handled differently depending on SDK version
-                # For google-genai (v0.1+), simpler part construction
                 contents.append(types.Part.from_bytes(data=media_data, mime_type="audio/mp3"))
 
         response = client.models.generate_content(model='gemini-2.0-flash', contents=contents)
@@ -517,7 +544,9 @@ mode = st.sidebar.radio("Select Module:", [
     "1. Wargame Room (Simulation)", 
     "2. Social Data Analysis (Universal)", 
     "3. Cognitive Editor (Text/Image/Audio)", 
-    "4. Comparison Test (A/B Testing)"
+    "4. Comparison Test (A/B Testing)",
+    "5. Live Radar (RSS/Reddit)",
+    "6. Deep Document Oracle (RAG)"
 ])
 
 # --- DISCLAIMER & METRICS ---
@@ -536,9 +565,10 @@ with st.sidebar.expander("ℹ️ Capabilities", expanded=False):
     st.markdown("""
     **System Capabilities:**
     - **Text/Social:** Analysis of fallacies, bots, and trends.
-    - **Vision:** Analysis of memes/screenshots.
+    - **Vision & EXIF:** Analysis of memes, deepfakes, and hidden metadata.
     - **Audio:** Tone & logic analysis of speech.
-    - **Simulation:** Real-time info-war games.
+    - **Radar:** Live monitoring of RSS feeds and Reddit.
+    - **Oracle:** Deep chat with 1M+ token context for massive PDFs.
     """)
 
 st.sidebar.markdown("---")
@@ -974,7 +1004,7 @@ elif mode == "2. Social Data Analysis (Universal)":
 # ==========================================
 elif mode == "3. Cognitive Editor (Text/Image/Audio)":
     st.header("3. Cognitive Editor & Fact-Checker")
-    st.caption("Upload Text, Images (Memes/Screenshots), or Audio clips.")
+    st.caption("Upload Text, Images (Memes/Screenshots), or Audio clips for deep inspection.")
     
     c1, c2 = st.columns([1, 1])
     
@@ -985,6 +1015,7 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio)":
         text_inp = None
         media_inp = None
         media_type = "text"
+        exif_data = {}
         
         if inp_type == "Text":
             text_inp = st.text_area("Paste Text Here", height=300)
@@ -1000,6 +1031,24 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio)":
                 media_inp = Image.open(f)
                 media_type = "image"
                 st.image(media_inp, caption="Uploaded Image", use_container_width=True)
+                
+                # --- EXIF OSINT EXTRACTION ---
+                try:
+                    exif_info = media_inp._getexif()
+                    if exif_info:
+                        for tag_id, value in exif_info.items():
+                            tag = ExifTags.TAGS.get(tag_id, tag_id)
+                            # Convert bytes or weird types to string to avoid JSON errors
+                            exif_data[tag] = str(value)
+                except:
+                    pass
+                
+                if exif_data:
+                    with st.expander("🔍 Invisible EXIF Metadata Found (OSINT)"):
+                        st.json(exif_data)
+                else:
+                    st.caption("No EXIF data found (Image might be scrubbed by social media).")
+
         elif inp_type == "Audio (Voice Intel)":
             f = st.file_uploader("Upload Audio", type=['mp3', 'wav', 'm4a'])
             if f:
@@ -1007,17 +1056,30 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio)":
                 media_type = "audio"
                 st.audio(media_inp, format='audio/mp3')
             
-        go = st.button("Analyze & Sanitize", use_container_width=True)
+        go = st.button("Analyze, Sanitize & Scan AI", use_container_width=True, type="primary")
 
     with c2:
         st.subheader("Output (Analysis & Sanitize)")
         if go:
             if (text_inp) or (media_inp):
                 with st.spinner(f"Processing with Gemini ({inp_type})..."):
-                    # Call multimodal function
                     ret = cognitive_rewrite(text_inp, key, media_inp, media_type)
                     
                     if ret:
+                        # --- AI SCANNER UI ---
+                        ai_prob = ret.get('ai_generated_probability', 0)
+                        if ai_prob > 75:
+                            st.error(f"🤖 **HIGH PROBABILITY OF AI GENERATION: {ai_prob}%**")
+                            st.caption(ret.get('ai_analysis', 'Detected deepfake/LLM patterns.'))
+                        elif ai_prob > 40:
+                            st.warning(f"⚠️ **SUSPICIOUS AI GENERATION SCORE: {ai_prob}%**")
+                            st.caption(ret.get('ai_analysis', 'Possible use of AI tools.'))
+                        else:
+                            st.success(f"👤 **LIKELY HUMAN GENERATED (AI Score: {ai_prob}%)**")
+                        
+                        st.markdown("---")
+
+                        # --- FALLACY & LOGIC UI ---
                         if ret.get('has_fallacy'):
                             st.error(f"🛑 Issue Detected: **{ret['fallacy_type']}**")
                             st.metric("Aggression Level", f"{ret.get('aggression', 0)}/10")
@@ -1058,7 +1120,6 @@ elif mode == "4. Comparison Test (A/B Testing)":
     if "GEMINI_API_KEY" in st.secrets: key = st.secrets["GEMINI_API_KEY"]
     else: key = st.text_input("API Key", type="password")
 
-    # --- STEP 1: SCRAPE ---
     if st.button("Step 1: Fetch Comments (Scrape Only)", type="primary"):
         if url_a and url_b:
             with st.spinner("Fetching raw data from both videos..."):
@@ -1080,7 +1141,6 @@ elif mode == "4. Comparison Test (A/B Testing)":
         else:
             st.error("Please provide both URLs.")
 
-    # --- DATA PREVIEW & SELECTION ---
     df_a_raw = st.session_state['data_store']['Arena']['df_a']
     df_b_raw = st.session_state['data_store']['Arena']['df_b']
 
@@ -1117,15 +1177,12 @@ elif mode == "4. Comparison Test (A/B Testing)":
             start_analysis = st.button("Step 3: Run Comparative Analysis", type="primary", disabled=not key)
 
         if start_analysis:
-            # PREPARE DATASET A
             subset_a = edited_a[edited_a.Select]
             if subset_a.empty: subset_a = edited_a.head(max_analyze)
             
-            # PREPARE DATASET B
             subset_b = edited_b[edited_b.Select]
             if subset_b.empty: subset_b = edited_b.head(max_analyze)
 
-            # EXECUTE ANALYSIS A
             prog_a = st.progress(0)
             res_a = []
             st.markdown("**Analyzing Contender A...**")
@@ -1135,7 +1192,6 @@ elif mode == "4. Comparison Test (A/B Testing)":
             final_a = pd.concat([subset_a.reset_index(drop=True), pd.DataFrame(res_a)], axis=1)
             st.session_state['data_store']['Arena']['analyzed_a'] = final_a
 
-            # EXECUTE ANALYSIS B
             prog_b = st.progress(0)
             res_b = []
             st.markdown("**Analyzing Contender B...**")
@@ -1147,7 +1203,6 @@ elif mode == "4. Comparison Test (A/B Testing)":
             
             st.rerun()
 
-    # --- RESULTS DISPLAY ---
     res_df_a = st.session_state['data_store']['Arena']['analyzed_a']
     res_df_b = st.session_state['data_store']['Arena']['analyzed_b']
 
@@ -1184,3 +1239,187 @@ elif mode == "4. Comparison Test (A/B Testing)":
         
         with st.expander("Detailed Comparison Data"):
             st.dataframe(combined[['Source', 'content', 'aggression', 'fallacy_type', 'is_bot']])
+
+# ==========================================
+# MODULE 5: LIVE RADAR (RSS/REDDIT)
+# ==========================================
+elif mode == "5. Live Radar (RSS/Reddit)":
+    st.header("5. Live Radar (Crisis Alert System)")
+    st.caption("Monitor live RSS feeds or subreddits to intercept escalating disinformation and aggression in real-time.")
+    
+    if "GEMINI_API_KEY" in st.secrets: key = st.secrets["GEMINI_API_KEY"]
+    else: key = st.text_input("API Key", type="password")
+    
+    c_radar1, c_radar2 = st.columns([2, 1])
+    with c_radar1:
+        feed_url = st.text_input("Enter RSS Feed, Subreddit, or News Keyword", placeholder="E.g., ansa, bbc, repubblica, reddit.com/r/worldnews")
+    with c_radar2:
+        max_entries = st.number_input("Entries to Fetch", 5, 50, 15)
+        fetch_btn = st.button("Step 1: Fetch Live Feed", type="primary", use_container_width=True)
+
+    # --- STEP 1: FETCH DATA ---
+    if fetch_btn and feed_url:
+        with st.spinner("Intercepting live feed..."):
+            try:
+                user_input = feed_url.strip().lower()
+                news_shortcuts = {
+                    "ansa": "https://www.ansa.it/sito/ansait_rss.xml",
+                    "repubblica": "https://www.repubblica.it/rss/homepage/rss2.0.xml",
+                    "corriere": "http://xml2.corriereobjects.it/rss/homepage.xml",
+                    "bbc": "http://feeds.bbci.co.uk/news/world/rss.xml",
+                    "cnn": "http://rss.cnn.com/rss/edition.rss",
+                    "nytimes": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"
+                }
+                
+                actual_url = feed_url
+                if user_input in news_shortcuts:
+                    actual_url = news_shortcuts[user_input]
+                elif "reddit.com/r/" in user_input and not user_input.endswith(".rss"):
+                    if actual_url.endswith("/"): actual_url = actual_url[:-1]
+                    actual_url += "/new/.rss"
+                
+                feed = feedparser.parse(actual_url)
+                
+                if not feed.entries:
+                    st.error("Could not fetch entries. Check the URL or formatting.")
+                else:
+                    entries_data = []
+                    for entry in feed.entries[:int(max_entries)]:
+                        clean_summary = re.sub(r'<[^>]+>', '', entry.get('summary', ''))
+                        text_to_analyze = f"TITLE: {entry.get('title', '')}\nCONTENT: {clean_summary[:500]}"
+                        entries_data.append({
+                            'Select': False,
+                            'timestamp': entry.get('published', 'Unknown'),
+                            'content': text_to_analyze,
+                            'link': entry.get('link', '')
+                        })
+                    
+                    st.session_state['data_store']['Radar']['df'] = pd.DataFrame(entries_data)
+                    st.session_state['data_store']['Radar']['analyzed'] = None
+                    st.success(f"✅ Intercepted {len(entries_data)} items from {feed.feed.get('title', 'Feed')}.")
+            except Exception as e:
+                st.error(f"Radar Fetch Error: {str(e)}")
+
+    # --- STEP 2: SELECTION AND ANALYSIS ---
+    radar_df = st.session_state['data_store'].get('Radar', {}).get('df')
+    
+    if radar_df is not None:
+        st.divider()
+        st.markdown("### Step 2: Select News to Analyze")
+        st.caption("Select specific items using checkboxes. If none selected, the top N rows will be analyzed.")
+        
+        edited_radar = st.data_editor(
+            radar_df,
+            column_config={"Select": st.column_config.CheckboxColumn(required=True)},
+            disabled=["timestamp", "content", "link"],
+            key="editor_radar",
+            height=300,
+            hide_index=True,
+            use_container_width=True
+        )
+        
+        c_action, c_limit = st.columns([1, 1])
+        with c_limit:
+            max_analyze = st.number_input("Max Rows to Analyze (if no manual selection)", 1, len(radar_df), min(10, len(radar_df)))
+        with c_action:
+            st.write("") 
+            st.write("") 
+            
+            selected = edited_radar['Select'].sum()
+            
+            if selected > 0:
+                btn_testo = f"Step 3: Run Threat Analysis ({selected})"
+            else:
+                btn_testo = f"Step 3: Run Threat Analysis (Batch Top {max_analyze})"
+                
+            analyze_btn = st.button(btn_testo, type="primary", disabled=not key)
+        
+        if analyze_btn:
+            subset = edited_radar[edited_radar.Select]
+            if subset.empty:
+                subset = edited_radar.head(max_analyze)
+                st.info(f"Using top {len(subset)} rows (Auto-Batch).")
+            else:
+                st.success(f"Using {len(subset)} manually selected rows.")
+                
+            prog = st.progress(0)
+            res = []
+            st.markdown("**Running Threat Analysis...**")
+            for i, (_, row) in enumerate(subset.iterrows()):
+                res.append(analyze_fallacies(row['content'], api_key=key, persona="Crisis & Sentiment Analyst"))
+                prog.progress((i + 1) / len(subset))
+            
+            final_df = pd.concat([subset.reset_index(drop=True), pd.DataFrame(res)], axis=1)
+            st.session_state['data_store']['Radar']['analyzed'] = final_df
+            st.rerun()
+    
+    # --- STEP 3: DISPLAY RESULTS ---
+    analyzed_radar = st.session_state['data_store'].get('Radar', {}).get('analyzed')
+    if analyzed_radar is not None:
+        st.divider()
+        avg_aggression = analyzed_radar['aggression'].mean()
+        
+        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1.metric("Live Aggression Index", f"{avg_aggression:.1f}/10")
+        col_m2.metric("Flagged Issues", len(analyzed_radar[analyzed_radar['has_fallacy']==True]))
+        col_m3.metric("Monitored Items", len(analyzed_radar))
+        
+        if avg_aggression > 6:
+            st.error("🚨 **CRISIS ALERT:** The current feed is exhibiting highly aggressive or toxic sentiment.")
+        elif avg_aggression > 4:
+            st.warning("⚠️ **ELEVATED TENSION:** The feed contains moderate aggression and polarization.")
+        else:
+            st.success("✅ **STABLE:** The feed is relatively neutral and calm.")
+        
+        st.subheader("Live Feed Feedbacks")
+        for _, r in analyzed_radar.iterrows():
+            with st.container(border=True):
+                st.caption(f"🕒 {r['timestamp']} | 🔗 [Source Link]({r['link']}) | **Agg:** {r['aggression']}/10")
+                st.write(r['content'][:300] + "...")
+                if r['has_fallacy']:
+                    st.error(f"🛑 **{r['fallacy_type']}**: {r['explanation']}")
+                else:
+                    st.success(f"✅ {r.get('explanation', 'Clear.')}")
+
+# ==========================================
+# MODULE 6: DEEP DOCUMENT ORACLE (RAG)
+# ==========================================
+elif mode == "6. Deep Document Oracle (RAG)":
+    st.header("6. Deep Document Oracle")
+    st.caption("Upload massive PDFs (e.g., manifestos, contracts, books) and find contradictions and extract deep facts without traditional RAG limits.")
+
+    if "GEMINI_API_KEY" in st.secrets: key = st.secrets["GEMINI_API_KEY"]
+    else: key = st.text_input("API Key", type="password")
+
+    uploaded_files = st.file_uploader("Upload PDF Documents", type="pdf", accept_multiple_files=True)
+    
+    if uploaded_files:
+        if 'doc_full_text' not in st.session_state or st.button("Process Documents"):
+            with st.spinner("Extracting text from all documents..."):
+                full_text = ""
+                for f in uploaded_files:
+                    txt = extract_text_from_pdf(f)
+                    if txt:
+                        full_text += f"\n\n--- DOCUMENT: {f.name} ---\n\n{txt}"
+                
+                st.session_state['doc_full_text'] = full_text
+                st.success(f"Processed {len(full_text)} characters across {len(uploaded_files)} documents. The Oracle is ready.")
+        
+        if 'doc_full_text' in st.session_state and st.session_state['doc_full_text']:
+            st.divider()
+            st.subheader("Chat with the Oracle")
+            
+            for message in st.session_state.doc_oracle_history:
+                with st.chat_message(message["role"]):
+                    st.markdown(message["content"])
+                    
+            if prompt := st.chat_input("Ask the Deep Oracle (e.g., 'Find all contradictions in chapter 3')..."):
+                st.session_state.doc_oracle_history.append({"role": "user", "content": prompt})
+                with st.chat_message("user"):
+                    st.markdown(prompt)
+                
+                with st.chat_message("assistant"):
+                    with st.spinner("Scouring massive document context..."):
+                        response = ask_document_oracle(st.session_state['doc_full_text'], prompt, key)
+                        st.markdown(response)
+                        st.session_state.doc_oracle_history.append({"role": "assistant", "content": response})
