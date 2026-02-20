@@ -434,25 +434,25 @@ def cognitive_rewrite(text, api_key, media_data=None, media_type="image"):
         client = genai.Client(api_key=api_key)
         
         prompt_text = f"""
-        You are a "Cognitive Editor", "Logic Guard", and "Fact Checker".
+        You are a strict "Fact Checker" and "Cognitive Editor".
         
-        TASK:
-        1. **DIAGNOSE**: Check for Logical Fallacies, Aggression, TONE (if audio), and FACTUAL ERRORS.
-        2. **REWRITE**: Create a neutral, logical, and factual version.
-        3. **EXTRACT FACTS**: List claims to verify.
+        CRITICAL LOGIC FOR "has_fallacy":
+        - You must evaluate the USER'S INPUT TEXT.
+        - If the user's input contains a false claim, historical inaccuracy, fake news, or logical fallacy -> YOU MUST RETURN "has_fallacy": true.
+        - Only return "has_fallacy": false if the user's input is 100% factually and logically correct.
         
-        CRITICAL RULES:
-        1. **FACTUAL ERRORS ARE ISSUES**: If content contains an objectively false statement, set "has_fallacy": true and "fallacy_type": "Errore Fattuale".
-        2. **AUDIO ANALYSIS**: If audio is provided, analyze Tone, Prosody, and Emotion. Note sarcasm or hesitation.
-        3. **LANGUAGE**: Output strictly in the INPUT LANGUAGE.
+        RULES:
+        1. **FACT CHECKING**: If the input is false (e.g., "Che Guevara never got a degree"), set "has_fallacy": true, "fallacy_type": "Errore Fattuale", and use "explanation" to state the real facts.
+        2. **LANGUAGE**: Translate all JSON values to match the INPUT LANGUAGE (e.g., Italian).
+        3. **AUDIO (if present)**: Analyze Tone and Prosody.
         
         RESPONSE (Strict JSON):
         {{
             "has_fallacy": true/false,
-            "fallacy_type": "Name or None",
-            "explanation": "Analysis (include Tone for audio)",
-            "rewritten_text": "Sanitized text / Transcript summary",
-            "facts": ["Claim 1", "Claim 2"],
+            "fallacy_type": "Name of fallacy or 'Errore Fattuale'",
+            "explanation": "Explain why the input text is false or true, citing real facts (in input language)",
+            "rewritten_text": "The corrected, factually accurate version (in input language)",
+            "facts": ["Claims verified"],
             "aggression": 0-10
         }}
         """
