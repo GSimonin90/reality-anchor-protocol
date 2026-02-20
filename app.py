@@ -995,6 +995,7 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio)":
                 st.success(f"Loaded {len(text_inp)} chars from PDF")
         elif inp_type == "Image (Vision Guard)":
             f = st.file_uploader("Upload Image", type=['png', 'jpg', 'jpeg'])
+            text_inp = st.text_area("Image Context / Post Text (Optional)", placeholder="E.g., Paste the Facebook/X post text that accompanied this photo...", height=100)
             if f:
                 media_inp = Image.open(f)
                 media_type = "image"
@@ -1027,7 +1028,7 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio)":
                         
                         st.markdown("---")
                         st.markdown("#### Rewritten Version / Transcript Summary")
-                        st.success(ret.get('rewritten_text', 'No rewrite available.'))
+                        st.info(ret.get('rewritten_text', 'No rewrite available.'))
                         st.markdown("---")
                         st.markdown("#### Fact Checker (Claims to Verify)")
                         facts = ret.get('facts', [])
