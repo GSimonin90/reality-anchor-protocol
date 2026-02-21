@@ -22,6 +22,7 @@ from fpdf import FPDF
 from wordcloud import WordCloud
 import streamlit.components.v1 as components
 import feedparser
+import networkx as nx
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -42,6 +43,7 @@ if 'data_store' not in st.session_state:
         'CSV File Upload': {'df': None, 'analyzed': None, 'summary': None},
         'YouTube Link': {'df': None, 'analyzed': None, 'summary': None},
         'Raw Text Paste': {'df': None, 'analyzed': None, 'summary': None},
+        'Telegram Dump (JSON)': {'df': None, 'analyzed': None, 'summary': None},
         'Arena': {'df_a': None, 'df_b': None, 'analyzed_a': None, 'analyzed_b': None},
         'Radar': {'df': None, 'analyzed': None}
     }
@@ -416,6 +418,27 @@ def normalize_dataframe(df):
     if 'likes' not in new_df.columns: new_df['likes'] = 0
     return new_df[['agent_id', 'timestamp', 'content', 'likes']]
 
+def parse_telegram_json(file_obj):
+    try:
+        data = json.load(file_obj)
+        messages = data.get('messages', [])
+        cleaned = []
+        for m in messages:
+            if m.get('type') == 'message' and m.get('text'):
+                text = m['text']
+                if isinstance(text, list): 
+                    text = " ".join([t if isinstance(t, str) else t.get('text', '') for t in text])
+                if len(text) > 5:
+                    cleaned.append({
+                        'agent_id': m.get('from', 'Unknown'),
+                        'timestamp': m.get('date', 'Unknown'),
+                        'content': text,
+                        'likes': 0
+                    })
+        return pd.DataFrame(cleaned)
+    except: 
+        return None
+
 # --- HELPER: HYBRID ANALYZER ---
 @st.cache_data(show_spinner=False)
 def analyze_fallacies_cached(text, api_key, context_info="", persona="Logic & Fact Analysis Engine"):
@@ -483,7 +506,8 @@ def cognitive_rewrite(text, api_key, media_data=None, media_type="image"):
             "facts": ["Claims verified"],
             "aggression": 0-10,
             "ai_generated_probability": 0-100,
-            "ai_analysis": "Reasoning for the AI probability score based on artifacts found"
+            "ai_analysis": "Reasoning for the AI probability score based on artifacts found",
+            "voice_stress_score": 0-100
         }}
         """
         
@@ -495,8 +519,11 @@ def cognitive_rewrite(text, api_key, media_data=None, media_type="image"):
                 contents.append(media_data) 
             elif media_type == "audio":
                 contents.append(types.Part.from_bytes(data=media_data, mime_type="audio/mp3"))
+            elif media_type == "video":
+                contents.append(types.Part.from_bytes(data=media_data, mime_type="video/mp4"))
 
-        response = client.models.generate_content(model='gemini-2.0-flash', contents=contents)
+        config_tools = types.GenerateContentConfig(tools=[{"google_search": {}}])
+        response = client.models.generate_content(model='gemini-2.0-flash', contents=contents, config=config_tools)
         increment_counter(len(str(contents)), len(response.text))
         res = extract_json(response.text)
         return sanitize_response(res)
@@ -533,6 +560,24 @@ def plot_heatmap(df):
         tooltip=['target', 'main_topic', 'count()']
     ).properties(height=300)
     return heatmap
+
+def plot_network_graph(df):
+    if 'target' not in df.columns or 'micro_topic' not in df.columns: return None
+    valid = df[(df['target'] != "Unknown") & (df['target'] != "None") & (df['micro_topic'] != "Unknown")]
+    if valid.empty: return None
+    
+    G = nx.Graph()
+    for _, row in valid.iterrows():
+        target = f"{row['target']}"
+        topic = f"{row['micro_topic']}"
+        G.add_edge(target, topic, weight=1)
+        
+    fig, ax = plt.subplots(figsize=(8, 6))
+    pos = nx.spring_layout(G, k=0.5, seed=42)
+    nx.draw(G, pos, with_labels=True, node_color='skyblue', edge_color='gray', 
+            node_size=2000, font_size=9, font_weight='bold', ax=ax)
+    ax.set_title("Entity-Narrative Network", size=14)
+    return fig
 
 # --- MAIN UI ---
 st.title("RAP: Reality Anchor Protocol")
@@ -663,7 +708,7 @@ elif mode == "2. Social Data Analysis (Universal)":
     st.sidebar.header("Settings")
     persona = st.sidebar.selectbox("Analysis Lens (Persona)", ["Strategic Intelligence Analyst", "Mass Psychologist (Emotional)", "Legal Consultant (Defamation/Risk)", "Campaign Manager (Opportunity)"])
     
-    input_method = st.sidebar.radio("Input Method:", ["CSV File Upload", "YouTube Link", "Raw Text Paste"], horizontal=True)
+    input_method = st.sidebar.radio("Input Method:", ["CSV File Upload", "YouTube Link", "Raw Text Paste", "Telegram Dump (JSON)"], horizontal=True)
     st.markdown("---")
     context_input = st.text_input("Global Context (Optional)", placeholder="E.g., 'Discussion about Flat Earth'")
     st.markdown("---")
@@ -724,6 +769,22 @@ elif mode == "2. Social Data Analysis (Universal)":
                     st.session_state['data_store'][input_method]['analyzed'] = None 
                     st.session_state['data_store'][input_method]['summary'] = None
                     st.success(f"Extracted {len(pdf_parsed)} items.")
+
+    elif input_method == "Telegram Dump (JSON)":
+        with st.form("tg_form"):
+            tg_file = st.file_uploader("Upload Telegram Chat Export (JSON)", type="json")
+            submitted = st.form_submit_button("Extract Intel")
+            if submitted and tg_file:
+                with st.spinner("Decrypting Telegram Dump..."):
+                    tg_df = parse_telegram_json(tg_file)
+                    if tg_df is not None:
+                        tg_df = detect_bot_activity(tg_df)
+                        st.session_state['data_store'][input_method]['df'] = tg_df
+                        st.session_state['data_store'][input_method]['analyzed'] = None 
+                        st.session_state['data_store'][input_method]['summary'] = None
+                        st.success(f"Intercepted {len(tg_df)} messages.")
+                    else:
+                        st.error("Invalid Telegram JSON format.")
 
     df = st.session_state['data_store'][input_method]['df']
     
@@ -902,6 +963,12 @@ elif mode == "2. Social Data Analysis (Universal)":
                                 x='Count', y=alt.Y('Archetype', sort='-x'), color=alt.Color('Archetype', scale=alt.Scale(scheme='dark2'), legend=None)
                             ).properties(height=300)
                             st.altair_chart(chart_arch, use_container_width=True)
+                with st.expander("Target-Narrative Network Graph", expanded=False):
+                    net_fig = plot_network_graph(adf)
+                    if net_fig:
+                        st.pyplot(net_fig)
+                    else:
+                        st.caption("Not enough Target/Topic data to build a network.")
 
                 st.markdown("---")
                 c_chart1, c_chart2 = st.columns(2)
@@ -1010,7 +1077,7 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio)":
     
     with c1:
         st.subheader("Input")
-        inp_type = st.radio("Input Type:", ["Text", "PDF", "Image (Vision Guard)", "Audio (Voice Intel)"], horizontal=True)
+        inp_type = st.radio("Input Type:", ["Text", "PDF", "Image (Vision Guard)", "Audio (Voice Intel)", "Video (Deepfake Scan)"], horizontal=True)
         
         text_inp = None
         media_inp = None
@@ -1032,19 +1099,55 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio)":
                 media_type = "image"
                 st.image(media_inp, caption="Uploaded Image", use_container_width=True)
                 
-                # --- EXIF OSINT EXTRACTION ---
+                # --- EXIF OSINT EXTRACTION & GPS GEOLOCATION ---
+                gps_coords = None
                 try:
                     exif_info = media_inp._getexif()
                     if exif_info:
+                        if 34853 in exif_info:
+                            gps_info = {ExifTags.GPSTAGS.get(k, k): v for k, v in exif_info[34853].items()}
+                            
+                            if 'GPSLatitude' in gps_info and 'GPSLongitude' in gps_info:
+                                lat_d = gps_info['GPSLatitude']
+                                lon_d = gps_info['GPSLongitude']
+                                lat_ref = gps_info.get('GPSLatitudeRef', 'N')
+                                lon_ref = gps_info.get('GPSLongitudeRef', 'E')
+                                
+                                lat = float(lat_d[0]) + float(lat_d[1])/60 + float(lat_d[2])/3600
+                                if lat_ref == 'S': lat = -lat
+                                
+                                lon = float(lon_d[0]) + float(lon_d[1])/60 + float(lon_d[2])/3600
+                                if lon_ref == 'W': lon = -lon
+                                
+                                gps_coords = pd.DataFrame({'lat': [lat], 'lon': [lon]})
+
                         for tag_id, value in exif_info.items():
                             tag = ExifTags.TAGS.get(tag_id, tag_id)
-                            # Convert bytes or weird types to string to avoid JSON errors
-                            exif_data[tag] = str(value)
-                except:
+                            if tag != "MakerNote":
+                                exif_data[tag] = str(value)
+                except Exception as e:
                     pass
                 
+                if gps_coords is not None:
+                    st.success("🌍 **Location Traces Detected (GPS):** Geolocation data found!")
+                    st.map(gps_coords, zoom=12, use_container_width=True)
+                
                 if exif_data:
-                    with st.expander("🔍 Invisible EXIF Metadata Found (OSINT)"):
+                    software_used = exif_data.get('Software') or exif_data.get('ProcessingSoftware')
+                    date_original = exif_data.get('DateTimeOriginal') or exif_data.get('DateTime')
+                    
+                    with st.expander("Invisible EXIF Metadata Found (OSINT)", expanded=True):
+                        
+                        if date_original:
+                            st.info(f"**Original Creation Date:** {date_original}")
+                        else:
+                            st.caption("**Creation Date:** Not found in metadata.")
+                            
+                        if software_used:
+                            st.warning(f"**Editing Trace Detected:** The image was modified using **{software_used}**.")
+                        else:
+                            st.success("✅ **Clean Metadata:** No image editing software detected in EXIF.")
+                            
                         st.json(exif_data)
                 else:
                     st.caption("No EXIF data found (Image might be scrubbed by social media).")
@@ -1055,6 +1158,14 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio)":
                 media_inp = f.read() # Read bytes
                 media_type = "audio"
                 st.audio(media_inp, format='audio/mp3')
+        
+        elif inp_type == "Video (Deepfake Scan)":
+            f = st.file_uploader("Upload Video (Max 50MB)", type=['mp4', 'mov'])
+            text_inp = st.text_area("Video Context (Optional)", placeholder="What is this video claiming?", height=100)
+            if f:
+                media_inp = f.read()
+                media_type = "video"
+                st.video(media_inp)
             
         go = st.button("Analyze, Sanitize & Scan AI", use_container_width=True, type="primary")
 
@@ -1092,6 +1203,14 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio)":
                         st.markdown("#### Rewritten Version / Transcript Summary")
                         st.info(ret.get('rewritten_text', 'No rewrite available.'))
                         st.markdown("---")
+                        if media_type == "audio" and 'voice_stress_score' in ret:
+                            stress = ret.get('voice_stress_score', 0)
+                            st.markdown("####Voice & Tone Analysis")
+                            if stress > 65:
+                                st.error(f"**Voice Stress Score: {stress}%** (High emotion, anger, or panic detected in prosody)")
+                            else:
+                                st.success(f"**Voice Stress Score: {stress}%** (Calm, controlled, or neutral tone)")
+                            st.markdown("---")
                         st.markdown("#### Fact Checker (Claims to Verify)")
                         facts = ret.get('facts', [])
                         if facts:
@@ -1380,6 +1499,21 @@ elif mode == "5. Live Radar (RSS/Reddit)":
                     st.error(f"🛑 **{r['fallacy_type']}**: {r['explanation']}")
                 else:
                     st.success(f"✅ {r.get('explanation', 'Clear.')}")
+        st.divider()
+        st.subheader("📥 Export Radar Intel")
+        st.caption("Download the monitored items for your intelligence reports.")
+        
+        # Puliamo le colonne per l'esportazione
+        export_df = analyzed_radar.drop(columns=['Select'], errors='ignore')
+        csv_data = export_df.to_csv(index=False).encode('utf-8')
+        
+        st.download_button(
+            label="Download Radar Alert Report (CSV)",
+            data=csv_data,
+            file_name=f"RAP_Radar_Alert_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv",
+            type="primary"
+        )
 
 # ==========================================
 # MODULE 6: DEEP DOCUMENT ORACLE (RAG)
