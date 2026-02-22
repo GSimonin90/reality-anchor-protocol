@@ -390,6 +390,7 @@ def fetch_youtube_video_bytes(url):
         'outtmpl': os.path.join(tempfile.gettempdir(), 'yt_temp_vid_%(id)s.%(ext)s'),
         'noplaylist': True,
         'quiet': True,
+        'extractor_args': {'youtube': ['player_client=android']},
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'referer': 'https://www.google.com/',
     }
@@ -399,7 +400,7 @@ def fetch_youtube_video_bytes(url):
             filepath = ydl.prepare_filename(info)
             with open(filepath, 'rb') as f:
                 data = f.read()
-            os.remove(filepath) # Puliamo le prove
+            os.remove(filepath)
             return data
     except Exception as e:
         return None
@@ -1696,7 +1697,7 @@ elif mode == "5. Live Radar (RSS/Reddit)":
         st.subheader("Live Feed Feedbacks")
         for _, r in analyzed_radar.iterrows():
             with st.container(border=True):
-                st.caption(f"🕒 {r['timestamp']} | 🔗 [Source Link]({r['link']}) | **Agg:** {r['aggression']}/10")
+                st.caption(f"{r['timestamp']} | [Source Link]({r['link']}) | **Agg:** {r['aggression']}/10")
                 st.write(r['content'][:300] + "...")
                 if r['has_fallacy']:
                     st.error(f"🛑 **{r['fallacy_type']}**: {r['explanation']}")
