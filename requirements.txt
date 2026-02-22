@@ -16,3 +16,4 @@ openpyxl
 Pillow
 feedparser
 networkx
+yt-dlp
