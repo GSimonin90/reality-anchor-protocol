@@ -23,6 +23,7 @@ from wordcloud import WordCloud
 import streamlit.components.v1 as components
 import feedparser
 import networkx as nx
+import yt_dlp
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -99,7 +100,7 @@ def sanitize_response(data):
     defaults = {
         "has_fallacy": False,
         "fallacy_type": "None",
-        "explanation": "Analisi non disponibile.", 
+        "explanation": "Analysis not available.",
         "correction": "",
         "main_topic": "General",
         "micro_topic": "General",
@@ -110,10 +111,10 @@ def sanitize_response(data):
         "counter_reply": "",
         "sentiment": "Neutral",
         "aggression": 0,
-        "rewritten_text": "Nessuna riscrittura necessaria.",
+        "rewritten_text": "No rewrite necessary.",
         "facts": [],
         "ai_generated_probability": 0,
-        "ai_analysis": "Analisi AI non effettuata."
+        "ai_analysis": "AI analysis not performed."
     }
     
     for key, default_val in defaults.items():
@@ -124,11 +125,11 @@ def sanitize_response(data):
         if str(data[key]).lower() == 'nan':
             data[key] = default_val
 
-    if data['explanation'] == "Analisi non disponibile." or data['explanation'] == "No analysis provided.":
+    if data['explanation'] in ["Analysis not available.", "Analisi non disponibile.", "No analysis provided."]:
         if data.get('has_fallacy'):
-            data['explanation'] = f"Rilevata fallacia di tipo: {data.get('fallacy_type')}."
+            data['explanation'] = f"Issue detected: {data.get('fallacy_type')}."
         else:
-            data['explanation'] = "Nessuna criticità rilevata, opinione legittima."
+            data['explanation'] = "No issues detected, content appears legitimate."
 
     return data
 
@@ -245,6 +246,35 @@ def generate_action_deck(df, action_type, api_key, context):
     except Exception as e:
         return f"Error generating action: {str(e)}"
 
+def generate_psyops_profile(df, target_id, api_key):
+    target_data = df[df['agent_id'] == target_id]
+    if target_data.empty: return "User not found."
+    
+    comments = "\n".join([f"- {row['content']}" for _, row in target_data.iterrows()])
+    
+    prompt = f"""
+    You are an expert Psychological Operations (Psy-Ops) and Behavioral Analyst.
+    Analyze the following messages posted by user '{target_id}':
+    {comments[:10000]}
+    
+    CRITICAL RULE: Detect the language of the messages. You MUST write the ENTIRE response (including all headers, titles, and bullet points) strictly in that SAME language. Do not use English unless the messages are in English.
+    
+    Provide a "Threat Actor Profile" structured exactly with these 4 points (translated into the target language):
+    1. Motivation (Ideological, Troll, Paid Bot, Genuine concern)
+    2. Emotional Triggers (What makes them angry?)
+    3. Linguistic Profile (Education level, slang, repetitive patterns)
+    4. Engagement Recommendation (How to interact with or neutralize them)
+    
+    Keep it concise and professional.
+    """
+    try:
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+        increment_counter(len(prompt), len(response.text))
+        return response.text
+    except Exception as e:
+        return f"Profiling Error: {str(e)}"
+
 # --- HELPER: THE ORACLE (GENERAL) ---
 def ask_the_oracle(df, question, api_key, context):
     if df is None: return "No data to analyze."
@@ -352,6 +382,27 @@ def generate_pdf_report(df, summary_text=None):
         pdf.image(chart_path, w=170)
         os.unlink(chart_path)
     return bytes(pdf.output())
+
+@st.cache_data(show_spinner=False)
+def fetch_youtube_video_bytes(url):
+    ydl_opts = {
+        'format': 'worst[ext=mp4]/worst',
+        'outtmpl': os.path.join(tempfile.gettempdir(), 'yt_temp_vid_%(id)s.%(ext)s'),
+        'noplaylist': True,
+        'quiet': True,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'referer': 'https://www.google.com/',
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filepath = ydl.prepare_filename(info)
+            with open(filepath, 'rb') as f:
+                data = f.read()
+            os.remove(filepath) # Puliamo le prove
+            return data
+    except Exception as e:
+        return None
 
 # --- HELPER: PDF EXTRACTOR & SCRAPERS ---
 @st.cache_data
@@ -484,30 +535,46 @@ def cognitive_rewrite(text, api_key, media_data=None, media_type="image"):
         client = genai.Client(api_key=api_key)
         
         prompt_text = f"""
-        You are a strict "Fact Checker", "Cognitive Editor", and "Deepfake/AI Detector".
+        You are a high-level Strategic Intelligence Investigator, OSINT Specialist, and Digital Forensics Expert. You never provide generic or lazy answers.
         
-        CRITICAL LOGIC FOR "has_fallacy":
-        - You must evaluate the USER'S INPUT TEXT and MEDIA.
-        - If the user's input contains a false claim, historical inaccuracy, fake news, or logical fallacy -> YOU MUST RETURN "has_fallacy": true.
-        - Only return "has_fallacy": false if the user's input is 100% factually and logically correct.
+        YOUR TASKS:
+        1. AI FORENSICS: Analyze media for AI GENERATION/ENHANCEMENT. Score 0-20 (Natural), 40-70 (Upscaled/Filtered), 70-100 (Deepfake/Generated). Look for specific artifacts: edge halos, texture loss in skin, unnatural gaze, or "masking" glitches.
+        2. IDENTITY VERIFICATION: Identify any famous people, celebrities, or public figures (e.g., 'Tom Cruise'). Evaluate if their appearance, age, and movements are consistent with known records. State clearly if the subject is a known individual being impersonated via Deepfake.
+        3. ADVANCED GEO-INT (Shadow Geolocation): MANDATORY: Deduce the geographic location by identifying micro-clues. Analyze: power outlets/plugs, street signs, architectural styles, car license plates, specific vegetation, logos (e.g., 'Barone Firenze'), or language on background objects. Aim for city or region level.
+        4. SYLLOGISM MACHINE: If text is provided, deconstruct the core argument into formal logical steps (Premise 1, Premise 2, Conclusion).
+        5. VIDEO TIMELINE: MANDATORY: If the media is a video, you MUST provide at least 5-8 timestamp objects in the 'video_timeline' array. Identify the exact moments where AI artifacts or facial "masking" become more prominent with technical details.
+        6. AGGRESSION: Score the emotional intensity/aggression from 0 to 10 (MANDATORY RANGE: 0-10).
         
-        RULES:
-        1. **FACT CHECKING**: If the input is false, set "has_fallacy": true, "fallacy_type": "Errore Fattuale", and use "explanation" to state the real facts.
-        2. **AI DETECTION**: Analyze the input (text or image) for signs of AI generation. For text: look for repetitive LLM structures. For images: look for impossible geometry, weird hands, smoothed textures, or fake news overlays. Provide a probability (0-100) and reasoning.
-        3. **AUDIO (if present)**: Analyze Tone and Prosody.
-        4. **LANGUAGE**: Translate all JSON values to match the INPUT LANGUAGE.
+        CRITICAL LANGUAGE RULE: 
+        1. IF 'Input Text/Context' IS PROVIDED: Detect its language and use it for ALL output values.
+        2. IF 'Input Text/Context' IS EMPTY: Check the MEDIA content. If it is English, use ENGLISH. If it is Italian, use ITALIAN. 
+        3. DEFAULT FALLBACK: If unsure, use ENGLISH. Never use German or other languages.
+        4. ABSOLUTE CONSISTENCY: Do not mix languages. If English is detected, every single field (explanation, details, ai_analysis, rewritten_text) MUST be in English.
+        
+        JSON OUTPUT RULES (Keep keys in English):
+        - "fallacy_type": Name of the issue/fallacy in the target language.
+        - "explanation": Comprehensive analysis in the target language.
+        - "ai_analysis": Detailed forensic breakdown (explicitly mention identified people and brands) in the target language.
+        - "syllogism_breakdown": Array of objects with 'step', 'text', 'flaw' in the target language.
+        - "video_timeline": Array of objects (MANDATORY) with 'timestamp', 'ai_score', 'details' (details in the target language).
+        - "shadow_geolocation": String with detailed geographic deduction (mention specific clues found) in the target language.
+        - "aggression": Integer (STRICTLY 0 to 10).
         
         RESPONSE (Strict JSON):
         {{
             "has_fallacy": true/false,
-            "fallacy_type": "Name of fallacy or 'Errore Fattuale'",
-            "explanation": "Explain why the input text is false or true, citing real facts",
-            "rewritten_text": "The corrected, factually accurate version",
-            "facts": ["Claims verified"],
-            "aggression": 0-10,
-            "ai_generated_probability": 0-100,
-            "ai_analysis": "Reasoning for the AI probability score based on artifacts found",
-            "voice_stress_score": 0-100
+            "fallacy_type": "",
+            "explanation": "",
+            "rewritten_text": "",
+            "facts": [],
+            "aggression": 0,
+            "ai_generated_probability": 0,
+            "ai_analysis": "",
+            "voice_stress_score": 0,
+            "shadow_geolocation": "",
+            "syllogism_breakdown": [],
+            "video_timeline": [],
+            "search_sources": []
         }}
         """
         
@@ -577,6 +644,37 @@ def plot_network_graph(df):
     nx.draw(G, pos, with_labels=True, node_color='skyblue', edge_color='gray', 
             node_size=2000, font_size=9, font_weight='bold', ax=ax)
     ax.set_title("Entity-Narrative Network", size=14)
+    return fig
+
+def plot_document_entity_graph(json_data):
+    if not json_data or 'relations' not in json_data: return None
+    
+    G = nx.Graph()
+    for rel in json_data['relations']:
+        src = str(rel.get('source', '')).strip()
+        tgt = str(rel.get('target', '')).strip()
+        label = str(rel.get('relation', '')).strip()
+        if src and tgt:
+            G.add_edge(src, tgt, label=label)
+            
+    if len(G.edges) == 0: return None
+            
+    fig, ax = plt.subplots(figsize=(12, 9))
+    pos = nx.spring_layout(G, k=1.5, seed=42)
+    
+    nx.draw(G, pos, with_labels=True, node_color='#ff7f0e', edge_color='#d3d3d3', 
+            node_size=2500, font_size=9, font_weight='bold', ax=ax, alpha=0.9,
+            bbox=dict(facecolor='white', edgecolor='none', alpha=0.6, pad=0.5))
+    
+    edge_labels = nx.get_edge_attributes(G, 'label')
+    
+    texts = nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=8,
+                                         bbox=dict(facecolor='white', edgecolor='none', alpha=0.9, pad=0.3))
+    
+    for _, t in texts.items():
+        t.set_zorder(10)
+    
+    ax.set_title("Secret Document Power Graph", size=14)
     return fig
 
 # --- MAIN UI ---
@@ -811,18 +909,35 @@ elif mode == "2. Social Data Analysis (Universal)":
                 current_df = editor_output if editor_output is not None else df
 
             with c2:
-                st.metric("Items", len(df))
-                bots_detected = len(df[df['is_bot']==True])
-                st.metric("⚠️ Suspicious Bots", bots_detected)
-                if len(df) > 0:
-                    try:
-                        text_combined = " ".join(df['content'].astype(str).tolist())
-                        wc = WordCloud(width=400, height=200, background_color='black', colormap='Reds', random_state=42).generate(text_combined)
-                        fig_wc, ax_wc = plt.subplots()
-                        ax_wc.imshow(wc, interpolation='bilinear')
-                        ax_wc.axis("off")
-                        st.pyplot(fig_wc)
-                    except: st.caption("Not enough text for WordCloud")
+                    st.metric("Items", len(df))
+                    bots_detected = len(df[df['is_bot']==True])
+                    st.metric("⚠️ Suspicious Bots", bots_detected)
+                    if len(df) > 0:
+                        try:
+                            from wordcloud import STOPWORDS
+                            
+                            # --- MODIFICA WORDCLOUD: Filtro Stop-Words ITA/ENG ---
+                            ita_stops = {
+                                "il", "lo", "la", "i", "gli", "le", "un", "uno", "una", "di", "a", "da", "in", "con", "su", "per", "tra", "fra", 
+                                "e", "o", "ma", "se", "perché", "non", "che", "chi", "cui", "mi", "ti", "ci", "vi", "si", "ho", "ha", "hanno", 
+                                "è", "sono", "sei", "siamo", "siete", "era", "erano", "c'è", "ne", "al", "allo", "alla", "ai", "agli", "alle", 
+                                "del", "dello", "della", "dei", "degli", "delle", "dal", "dallo", "dalla", "dai", "dagli", "dalle", "nel", "nello", 
+                                "nella", "nei", "negli", "nelle", "sul", "sullo", "sulla", "sui", "sugli", "sulle", "questo", "quello", "più", 
+                                "anche", "tutto", "tutti", "solo", "fare", "fatto", "essere", "stato", "poi", "quando", "molto", "così", "quindi", 
+                                "dopo", "invece", "ancora", "già", "senza", "sempre", "ora", "qui", "lì", "quale", "cosa", "loro", "come"
+                            }
+                            # Uniamo il filtro inglese di default con la nostra black-list italiana
+                            custom_stops = set(STOPWORDS).union(ita_stops)
+                            
+                            # Convertiamo il testo in minuscolo per evitare duplicati come "Governo" e "governo"
+                            text_combined = " ".join(df['content'].astype(str).tolist()).lower()
+                            
+                            wc = WordCloud(width=400, height=200, background_color='black', colormap='Reds', random_state=42, stopwords=custom_stops).generate(text_combined)
+                            fig_wc, ax_wc = plt.subplots()
+                            ax_wc.imshow(wc, interpolation='bilinear')
+                            ax_wc.axis("off")
+                            st.pyplot(fig_wc)
+                        except: st.caption("Not enough text for WordCloud")
 
             st.markdown("---")
             if "GEMINI_API_KEY" in st.secrets: key = st.secrets["GEMINI_API_KEY"]
@@ -934,6 +1049,23 @@ elif mode == "2. Social Data Analysis (Universal)":
                             st.download_button("Download Strategy", action_plan, "strategy.txt")
                     else: st.warning("Please select at least one comment in the table above.")
 
+                st.markdown("---")
+                st.markdown("---")
+                st.subheader("Psy-Ops Target Profiler")
+                st.caption("Select a specific User/Agent to run a deep behavioral analysis on their messaging patterns.")
+                
+                c_psy1, c_psy2 = st.columns([1, 2])
+                with c_psy1:
+                    unique_users = adf['agent_id'].unique()
+                    selected_target = st.selectbox("Select Target (Agent ID)", unique_users)
+                    run_psyops = st.button("Run Behavioral Profile", type="secondary")
+                
+                with c_psy2:
+                    if run_psyops:
+                        with st.spinner(f"Profiling {selected_target}..."):
+                            profile_res = generate_psyops_profile(adf, selected_target, key)
+                            st.success(f"Profile Generated for: {selected_target}")
+                            st.markdown(profile_res)
                 st.markdown("---")
                 with st.expander("📊 Open Intelligence Visuals (Radar, Heatmap & Targets)", expanded=False):
                     c_vis1, c_vis2 = st.columns(2)
@@ -1071,7 +1203,7 @@ elif mode == "2. Social Data Analysis (Universal)":
 # ==========================================
 elif mode == "3. Cognitive Editor (Text/Image/Audio)":
     st.header("3. Cognitive Editor & Fact-Checker")
-    st.caption("Upload Text, Images (Memes/Screenshots), or Audio clips for deep inspection.")
+    st.caption("Upload Text, Images (Memes/Screenshots), Audio clips or Video/Youtube links for deep inspection.")
     
     c1, c2 = st.columns([1, 1])
     
@@ -1160,18 +1292,37 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio)":
                 st.audio(media_inp, format='audio/mp3')
         
         elif inp_type == "Video (Deepfake Scan)":
-            f = st.file_uploader("Upload Video (Max 50MB)", type=['mp4', 'mov'])
+            v_mode = st.radio("Video Source:", ["Upload File (MP4/MOV)", "YouTube Link"], horizontal=True)
             text_inp = st.text_area("Video Context (Optional)", placeholder="What is this video claiming?", height=100)
-            if f:
-                media_inp = f.read()
-                media_type = "video"
-                st.video(media_inp)
+            
+            yt_url_input = None 
+            
+            if v_mode == "Upload File (MP4/MOV)":
+                f = st.file_uploader("Upload Video (Max 50MB)", type=['mp4', 'mov'])
+                if f:
+                    media_inp = f.read()
+                    media_type = "video"
+                    st.video(media_inp)
+            else:
+                yt_url_input = st.text_input("Paste YouTube URL here")
+                if yt_url_input:
+                    st.video(yt_url_input) 
+                    media_type = "video"
             
         go = st.button("Analyze, Sanitize & Scan AI", use_container_width=True, type="primary")
 
     with c2:
         st.subheader("Output (Analysis & Sanitize)")
         if go:
+            # --- BACKGROUND YOUTUBE DOWNLOAD SECTION ---
+            if inp_type == "Video (Deepfake Scan)" and yt_url_input:
+                with st.spinner("Downloading YouTube video in background for analysis (optimized quality)..."):
+                    media_inp = fetch_youtube_video_bytes(yt_url_input)
+                    if not media_inp:
+                        st.error("Failed to download the video. It might be private, age-restricted, or no longer available.")
+                        st.stop()
+            # ----------------------------------------------
+                        
             if (text_inp) or (media_inp):
                 with st.spinner(f"Processing with Gemini ({inp_type})..."):
                     ret = cognitive_rewrite(text_inp, key, media_inp, media_type)
@@ -1190,6 +1341,39 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio)":
                         
                         st.markdown("---")
 
+                        # --- FORENSIC VIDEO TIMELINE ---
+                        v_timeline = ret.get('video_timeline', [])
+                        if media_type == "video" and isinstance(v_timeline, list) and len(v_timeline) > 0:
+                            st.markdown("#### Forensic Video Timeline")
+                            st.caption("Temporal analysis of AI manipulation probability across the video length.")
+                            
+                            vt_df = pd.DataFrame(v_timeline)
+                            
+                            rename_map = {}
+                            for col in vt_df.columns:
+                                if col.lower() in ['time', 'timestamp', 'minuti']: rename_map[col] = 'timestamp'
+                                if col.lower() in ['ai_score', 'score', 'probabilità', 'probability']: rename_map[col] = 'ai_score'
+                                if col.lower() in ['details', 'dettagli', 'info']: rename_map[col] = 'details'
+                            vt_df = vt_df.rename(columns=rename_map)
+
+                            if 'timestamp' in vt_df.columns and 'ai_score' in vt_df.columns:
+                                vt_df['ai_score'] = pd.to_numeric(vt_df['ai_score'], errors='coerce').fillna(0)
+                                
+                                chart_vt = alt.Chart(vt_df).mark_line(point=True, color='red').encode(
+                                    x=alt.X('timestamp:O', title='Timestamp'),
+                                    y=alt.Y('ai_score:Q', title='AI Probability (%)', scale=alt.Scale(domain=[0, 100])),
+                                    tooltip=['timestamp', 'ai_score', 'details']
+                                ).properties(height=250)
+                                st.altair_chart(chart_vt, use_container_width=True)
+                                
+                                with st.expander("View Frame-by-Frame Details"):
+                                    for _, row in vt_df.iterrows():
+                                        st.write(f"**{row.get('timestamp', '??:??')}** (Score: {int(row.get('ai_score', 0))}%) - {row.get('details', '')}")
+                            else:
+                                st.warning("Timeline data format inconsistent. Check RAW output.")
+                            st.markdown("---")
+                        # ---------------------------------------------
+
                         # --- FALLACY & LOGIC UI ---
                         if ret.get('has_fallacy'):
                             st.error(f"🛑 Issue Detected: **{ret['fallacy_type']}**")
@@ -1200,6 +1384,21 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio)":
                             st.info(f"**Analysis:** {ret.get('explanation', 'Content is sound.')}")
                         
                         st.markdown("---")
+                        syl_breakdown = ret.get('syllogism_breakdown', [])
+                        if syl_breakdown and len(syl_breakdown) > 0:
+                            st.markdown("#### Decostruzione Logica")
+                            st.caption("Il testo è stato frammentato in premesse formali per individuare il punto esatto in cui la logica fallisce.")
+                            for step in syl_breakdown:
+                                flaw_text = str(step.get('flaw', '')).strip()
+                                step_name = step.get('step', 'Step')
+                                text_val = step.get('text', '')
+                                
+                                if flaw_text and flaw_text.lower() not in ["none", "nessuno", "nessuna", "n/a", "", "null"]:
+                                    st.error(f"**{step_name}**: {text_val}\n\n⚠️ **Salto Logico / Fallacia:** {flaw_text}")
+                                else:
+                                    st.info(f"**{step_name}**: {text_val}")
+                            st.markdown("---")
+                        # -------------------------------------------
                         st.markdown("#### Rewritten Version / Transcript Summary")
                         st.info(ret.get('rewritten_text', 'No rewrite available.'))
                         st.markdown("---")
@@ -1210,6 +1409,10 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio)":
                                 st.error(f"**Voice Stress Score: {stress}%** (High emotion, anger, or panic detected in prosody)")
                             else:
                                 st.success(f"**Voice Stress Score: {stress}%** (Calm, controlled, or neutral tone)")
+                            st.markdown("---")
+                        if media_type in ["image", "video"] and ret.get('shadow_geolocation') and ret.get('shadow_geolocation') != "Not applicable":
+                            st.markdown("#### Shadow Geolocation (Visual GeoINT)")
+                            st.info(f"**AI Visual Deduction:** {ret['shadow_geolocation']}")
                             st.markdown("---")
                         st.markdown("#### Fact Checker (Claims to Verify)")
                         facts = ret.get('facts', [])
@@ -1541,6 +1744,38 @@ elif mode == "6. Deep Document Oracle (RAG)":
         
         if 'doc_full_text' in st.session_state and st.session_state['doc_full_text']:
             st.divider()
+            
+            # --- MODIFICA KNOWLEDGE GRAPH (Modulo 6) ---
+            with st.expander("Extract Document Power Network (Knowledge Graph)", expanded=False):
+                st.caption("Automatically scan the document to map relationships between People, Organizations, and Locations.")
+                if st.button("Generate Power Graph"):
+                    with st.spinner("Extracting entities and relationships (this may take a minute)..."):
+                        graph_prompt = f"""
+                        Analyze this document and extract the top 12 most important relationships between entities (People, Organizations, Locations).
+                        CRITICAL RULES:
+                        1. The "relation" field MUST BE ULTRA-SHORT (maximum 1 to 3 words, e.g., "CEO", "Owned by", "Funded", "Opposes").
+                        2. Keep entity names short and clean.
+                        Return ONLY a valid JSON format like this:
+                        {{ "relations": [ {{"source": "Entity 1", "target": "Entity 2", "relation": "Short Label"}} ] }}
+                        
+                        DOCUMENT:
+                        {st.session_state['doc_full_text'][:30000]}
+                        """
+                        try:
+                            client = genai.Client(api_key=key)
+                            graph_res = client.models.generate_content(model='gemini-2.0-flash', contents=graph_prompt)
+                            graph_json = extract_json(graph_res.text)
+                            
+                            fig_doc = plot_document_entity_graph(graph_json)
+                            if fig_doc:
+                                st.pyplot(fig_doc)
+                            else:
+                                st.error("Not enough clear relationships found to build a graph.")
+                        except Exception as e:
+                            st.error(f"Graph Extraction Error: {str(e)}")
+            st.divider()
+            # ---------------------------------------------
+            
             st.subheader("Chat with the Oracle")
             
             for message in st.session_state.doc_oracle_history:
