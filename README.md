@@ -47,32 +47,50 @@ We have developed a real-time web interface to interact with the models and visu
 
 # Features
 
-### Social Data Analysis (The Core)
-* **Universal Import:** Ingest data from **Facebook, X (Twitter), Instagram, and TikTok** via CSV (compatible with extensions like *Instant Data Scraper*).
-* **Native YouTube Scraper:** Extract comments directly from video URLs without requiring personal API keys.
-* **Adaptive Personas:** Switch the analytical lens instantly. Ask the AI to analyze data as a **Strategic Intelligence Analyst**, a **Mass Psychologist** (focus on emotional triggers), a **Legal Consultant** (focus on liability/defamation), or a **Campaign Manager** (focus on opportunity).
-* **The Oracle:** Chat directly with your dataset. Ask questions like *"Who is the main target of hate?"* or *"Find the most persuasive argument"* and get answers based on the analyzed data.
+## Social Data Analysis
+The core system for monitoring and deconstructing digital narratives.
 
-### Comparison Test (A/B Testing)
-* **Head-to-Head Comparison:** Compare two different datasets or YouTube videos side-by-side.
-* **Metric Battle:** Instantly visualize the difference in **Aggression Levels**, **Bot Presence**, and **Logical Fallacies** between two sources (e.g., "Right-wing Video" vs "Left-wing Video").
+* **Universal Import**: Supports data ingestion from Facebook, X (Twitter), Instagram, and TikTok via CSV files, optimized for integration with browser extensions like Instant Data Scraper.
+* **Native YouTube Scraper**: Automated extraction of comments directly from video URLs without the need for personal API keys.
+* **Adaptive Personas**: Selection of different analytical profiles to examine data through specific lenses: Strategic Intelligence Analyst, Mass Psychologist, Legal Consultant, or Campaign Manager.
+* **Psy-Ops Target Profiler**: Behavioral analysis and profiling of specific users to identify motivations, emotional triggers, and recurring linguistic patterns.
+* **The Oracle**: A direct chat interface with the dataset for targeted queries regarding hate distribution, persuasive arguments, or identification of key actors.
 
-### Wargame Room (Live Simulation)
-* **Real-Time Info-War Simulator:** Visualize the spread of disinformation with a reactive heatmap and infection graphs.
-* **Network Topologies:** Choose the battlefield scenario: **Public Square** (high connectivity), **Echo Chambers** (isolated clusters), or **Influencer Network** (central hubs).
-* **Blue Team Countermeasures:** Deploy active defenses like **Targeted Debunking**, **Algorithmic Dampening**, or **Hard Bans** and watch the infection rate curve change in real-time.
+## Comparison Test (A/B Testing)
+Comparative analysis to map divergences in digital narratives.
 
-### Cognitive Editor & Vision Guard (Multimodal)
-* **Vision Guard:** Upload **Images, Memes, or Screenshots**. The AI "sees" the image, analyzes visual symbolism/text, and detects manipulative patterns or fallacies.
-* **Voice Intel:** Upload **Audio files (MP3, WAV, M4A)**. The AI "listens" to the speech, analyzing **Tone, Prosody, and Emotion** to detect sarcasm, hesitation, or aggression that text analysis misses.
-* **Auto-Sanitize:** The system doesn't just flag errors; it **rewrites** toxic or fallacious text into a neutral, logical, and factual version.
-* **Fact Extraction:** Automatically extracts a bulleted list of factual claims from Text, PDFs, or Images that require external verification.
-* **Document Analysis:** Upload full **PDF documents** (contracts, articles, political programs) for deep logical scanning.
+* **Head-to-Head Comparison**: Simultaneous comparison between two different datasets or YouTube videos.
+* **Metric Battle**: Immediate visualization of discrepancies in aggression levels, presence of automated accounts (bots), and frequency of logical fallacies between opposing sources.
 
-### Enterprise Reporting
-* **Hybrid Truth Engine:** Powered by **Google Gemini 2.0 Flash**, performing a 3-layer deep scan (Logical Validity, Factual Accuracy, Emotional Spectrum).
-* **Bot Hunter:** Heuristic detection of coordinated inauthentic behavior and spam bots.
-* **Export Ready:** Generate professional **Excel** datasets or paginated **PDF Reports** containing executive summaries, fallacy distribution charts, and word clouds for research or journalism.
+## Wargame Room (Live Simulation)
+A simulation environment for studying the spread of information and disinformation.
+
+* **Real-Time Info-War Simulator**: Modeling the propagation of disinformation via reactive heatmaps and infection graphs.
+* **Network Topologies**: Configurable scenarios including Public Square, Echo Chambers, or Influencer Network.
+* **Blue Team Countermeasures**: Simulation of the impact of active defenses such as Targeted Debunking, Algorithmic Dampening, or Hard Bans on the diffusion curve.
+
+## Cognitive Editor and Forensics (Multimodal)
+Advanced tools for multimedia content analysis and integrity verification.
+
+* **Vision Guard and Deepfake Scanner**: Analysis of images and videos for detecting digital manipulation, AI upscaling, and face-swapping.
+* **Forensic Video Timeline**: Temporal analysis to locate AI alterations frame-by-frame across the video length.
+* **Voice Intel**: Processing of audio files for the analysis of tone, prosody, and emotion to detect non-textual sarcasm or aggression.
+* **Shadow Geolocation**: Deduction of geographic location through the analysis of visual micro-clues such as architecture, signage, vegetation, and local brands (GeoINT).
+* **Syllogism Machine**: Logical deconstruction of speech into premises and conclusions to identify the exact breaking point of an argument.
+* **Auto-Sanitize**: Automatic rewriting of toxic or fallacious text into neutral, logical, and fact-based versions.
+
+## Deep Document Oracle (RAG)
+Massive analysis of complex textual documents.
+
+* **Document Analysis**: Processing of large PDF files for logical scanning and fact extraction.
+* **Knowledge Graph**: Automatic generation of relational maps between people, organizations, and locations mentioned in documents to visualize networks of power and influence.
+
+## Enterprise Reporting
+Output tools for the production of strategic intelligence.
+
+* **Hybrid Truth Engine**: Powered by Google Gemini, performing three-level scans focused on logical validity, factual accuracy, and emotional spectrum.
+* **Bot Hunter**: Heuristic detection of coordinated inauthentic behavior and spam networks.
+* **Export Ready**: Generation of professional reports in Excel or PDF formats containing executive summaries, fallacy distribution charts, and filtered word clouds.
 
 ### How to Run Locally
 
@@ -100,6 +118,7 @@ We have developed a real-time web interface to interact with the models and visu
 ## Contributing
 
 This is an experimental research project. We welcome forks, pull requests, and alternative modeling approaches to challenge our parameters.
+
 
 
 
