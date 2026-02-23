@@ -383,37 +383,60 @@ def generate_pdf_report(df, summary_text=None):
         os.unlink(chart_path)
     return bytes(pdf.output())
 
-import os
-import tempfile
-from pytubefix import YouTube
+import requests
+import re
 
 @st.cache_data(show_spinner=False)
 def fetch_youtube_video_bytes(url):
-    try:
-        yt = YouTube(url, client='TV')
-        
-        stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
-        
-        if not stream:
-            yt = YouTube(url, client='ANDROID')
-            stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
-            
-        if not stream:
-            st.error("🔍 DEBUG API: No progressive mp4 streams found. YouTube might be blocking this specific video format.")
-            return None
-            
-        temp_dir = tempfile.gettempdir()
-        file_path = stream.download(output_path=temp_dir)
-        
-        with open(file_path, 'rb') as f:
-            data = f.read()
-            
-        os.remove(file_path)
-        return data
-        
-    except Exception as e:
-        st.error(f"🔍 DEBUG API: Pytubefix error occurred: {str(e)}")
+    # Extract YouTube Video ID using Regex
+    match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11}).*", url)
+    if not match:
+        st.error("🔍 DEBUG API: Could not extract a valid YouTube Video ID from the URL.")
         return None
+        
+    video_id = match.group(1)
+    
+    # List of public Invidious instances. They handle the PO Tokens and 403 bypasses on their end.
+    # If one is temporarily blocked by YouTube, the loop automatically tries the next one.
+    instances = [
+        "https://inv.tux.pizza",
+        "https://vid.puffyan.us",
+        "https://invidious.flokinet.to",
+        "https://invidious.nerdvpn.de",
+        "https://yewtu.be"
+    ]
+    
+    for instance in instances:
+        try:
+            # 1. Request video metadata from the proxy instance
+            api_url = f"{instance}/api/v1/videos/{video_id}"
+            response = requests.get(api_url, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                # 2. Filter for progressive MP4 streams (video+audio ready)
+                streams = data.get("formatStreams", [])
+                mp4_streams = [s for s in streams if s.get("container") == "mp4"]
+                
+                if mp4_streams:
+                    # Pick the first available mp4 stream
+                    direct_video_url = mp4_streams[0].get("url")
+                    
+                    # 3. Download the actual video bytes
+                    vid_response = requests.get(direct_video_url, stream=True, timeout=30)
+                    vid_response.raise_for_status()
+                    
+                    # Success! Return bytes and break the loop
+                    return vid_response.content
+                    
+        except Exception:
+            # Silently catch timeouts or blocks and try the next instance
+            continue
+            
+    # If we exit the loop, all instances failed
+    st.error("🔍 DEBUG API: All Invidious proxy clusters failed to fetch the video. The video might be age-restricted, or YouTube is actively blocking all public proxy nodes.")
+    return None
 
 # --- HELPER: PDF EXTRACTOR & SCRAPERS ---
 @st.cache_data
