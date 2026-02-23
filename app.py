@@ -570,11 +570,16 @@ def cognitive_rewrite(text, api_key, media_data=None, media_type="image"):
         You are a high-level Strategic Intelligence Investigator, OSINT Specialist, and Digital Forensics Expert. You never provide generic or lazy answers.
         
         YOUR TASKS:
-        1. AI FORENSICS: Analyze media for AI GENERATION/ENHANCEMENT. Score 0-20 (Natural), 40-70 (Upscaled/Filtered), 70-100 (Deepfake/Generated). Look for specific artifacts: edge halos, texture loss in skin, unnatural gaze, or "masking" glitches.
-        2. IDENTITY VERIFICATION: Identify any famous people, celebrities, or public figures (e.g., 'Tom Cruise'). Evaluate if their appearance, age, and movements are consistent with known records. State clearly if the subject is a known individual being impersonated via Deepfake.
-        3. ADVANCED GEO-INT (Shadow Geolocation): MANDATORY: Deduce the geographic location by identifying micro-clues. Analyze: power outlets/plugs, street signs, architectural styles, car license plates, specific vegetation, logos (e.g., 'Barone Firenze'), or language on background objects. Aim for city or region level.
-        4. SYLLOGISM MACHINE: If text is provided, deconstruct the core argument into formal logical steps (Premise 1, Premise 2, Conclusion).
-        5. VIDEO TIMELINE: MANDATORY: If the media is a video, you MUST provide at least 5-8 timestamp objects in the 'video_timeline' array. Identify the exact moments where AI artifacts or facial "masking" become more prominent with technical details.
+        1. AI FORENSICS: Analyze media for AI GENERATION/ENHANCEMENT. Score 0-20 (Natural), 40-70 (Upscaled/Filtered), 70-100 (Deepfake/Generated). 
+           CRITICAL - Look for these specific artifacts depending on the subject:
+           - HUMANS: edge halos, texture loss in skin, unnatural gaze, missing/merged fingers, or "masking" glitches.
+           - ENVIRONMENT & PHYSICS: objects morphing or melting, physically impossible events (e.g., roads/buildings breaking like paper or rubber), gravity violations, floating objects, impossible lighting/shadows, or static backgrounds that should be reacting to a massive foreground event.
+        2. IDENTITY VERIFICATION: Identify any famous people, celebrities, or public figures. Evaluate if their appearance, age, and movements are consistent.
+        3. ADVANCED GEO-INT (Shadow Geolocation): 
+           - IF THE MEDIA IS AI-GENERATED (Score > 60): You MUST output exactly "Fictional AI-Generated Environment - Geolocation not applicable." Do not attempt to guess a real location.
+           - IF THE MEDIA IS REAL: Deduce the geographic location by identifying micro-clues (power outlets, street signs, architectural styles, car plates, vegetation). Aim for city or region level.
+        4. SYLLOGISM MACHINE: If text or speech is provided, deconstruct the core argument into formal logical steps. If there is no text/speech, leave empty.
+        5. VIDEO TIMELINE: MANDATORY: If the media is a video, provide at least 5-8 timestamp objects in the 'video_timeline' array. Identify the exact moments where physics hallucinate, objects melt, or AI artifacts appear.
         6. AGGRESSION: Score the emotional intensity/aggression from 0 to 10 (MANDATORY RANGE: 0-10).
         
         CRITICAL LANGUAGE RULE: 
@@ -1232,7 +1237,7 @@ elif mode == "2. Social Data Analysis (Universal)":
 # ==========================================
 elif mode == "3. Cognitive Editor (Text/Image/Audio/Video)":
     st.header("3. Cognitive Editor & Fact-Checker")
-    st.caption("Upload Text, Images (Memes/Screenshots), Audio clips or Video/Youtube links for deep inspection.")
+    st.caption("Upload Text, Images (Memes/Screenshots), Audio clips or Videos for deep inspection.")
     
     c1, c2 = st.columns([1, 1])
     
@@ -1805,5 +1810,3 @@ elif mode == "6. Deep Document Oracle (RAG)":
                         response = ask_document_oracle(st.session_state['doc_full_text'], prompt, key)
                         st.markdown(response)
                         st.session_state.doc_oracle_history.append({"role": "assistant", "content": response})
-
-
