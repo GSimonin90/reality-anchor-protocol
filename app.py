@@ -23,7 +23,6 @@ from wordcloud import WordCloud
 import streamlit.components.v1 as components
 import feedparser
 import networkx as nx
-import yt_dlp
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -1325,17 +1324,13 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio)":
                 st.audio(media_inp, format='audio/mp3')
         
         elif inp_type == "Video (Deepfake Scan)":
-            v_mode = st.radio("Video Source:", ["Upload File (MP4/MOV)", "YouTube Link"], horizontal=True)
             text_inp = st.text_area("Video Context (Optional)", placeholder="What is this video claiming?", height=100)
             
-            yt_url_input = None 
-            
-            if v_mode == "Upload File (MP4/MOV)":
-                f = st.file_uploader("Upload Video (Max 50MB)", type=['mp4', 'mov'])
-                if f:
-                    media_inp = f.read()
-                    media_type = "video"
-                    st.video(media_inp)
+            f = st.file_uploader("Upload Video (Max 50MB)", type=['mp4', 'mov'])
+            if f:
+                media_inp = f.read()
+                media_type = "video"
+                st.video(media_inp)
             else:
                 yt_url_input = st.text_input("Paste YouTube URL here")
                 if yt_url_input:
@@ -1347,16 +1342,7 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio)":
     with c2:
         st.subheader("Output (Analysis & Sanitize)")
         if go:
-            # --- BACKGROUND YOUTUBE DOWNLOAD SECTION ---
-            if inp_type == "Video (Deepfake Scan)" and yt_url_input:
-                with st.spinner("Downloading YouTube video in background for analysis (optimized quality)..."):
-                    media_inp = fetch_youtube_video_bytes(yt_url_input)
-                    if not media_inp:
-                        st.error("Failed to download the video. It might be private, age-restricted, or no longer available.")
-                        st.stop()
-            # ----------------------------------------------
-                        
-            if (text_inp) or (media_inp):
+            if media_inp or text_inp:
                 with st.spinner(f"Processing with Gemini ({inp_type})..."):
                     ret = cognitive_rewrite(text_inp, key, media_inp, media_type)
                     
