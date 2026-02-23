@@ -1230,7 +1230,7 @@ elif mode == "2. Social Data Analysis (Universal)":
 # ==========================================
 # MODULE 3: COGNITIVE EDITOR (MULTIMODAL)
 # ==========================================
-elif mode == "3. Cognitive Editor (Text/Image/Audio)":
+elif mode == "3. Cognitive Editor (Text/Image/Audio/Video)":
     st.header("3. Cognitive Editor & Fact-Checker")
     st.caption("Upload Text, Images (Memes/Screenshots), Audio clips or Video/Youtube links for deep inspection.")
     
@@ -1805,4 +1805,5 @@ elif mode == "6. Deep Document Oracle (RAG)":
                         response = ask_document_oracle(st.session_state['doc_full_text'], prompt, key)
                         st.markdown(response)
                         st.session_state.doc_oracle_history.append({"role": "assistant", "content": response})
+
 
