@@ -387,9 +387,8 @@ def generate_pdf_report(df, summary_text=None):
 def fetch_youtube_video_bytes(url):
     cookie_path = None
     
-    # Rimosso user_agent e android client: lasciamo che yt-dlp usi l'identità dei cookie
     ydl_opts = {
-        'format': 'worst[ext=mp4]/worst',
+        'format': 'best[height<=720][ext=mp4]/best[ext=mp4]/best',
         'outtmpl': os.path.join(tempfile.gettempdir(), 'yt_temp_vid_%(id)s.%(ext)s'),
         'noplaylist': True,
         'quiet': True,
@@ -398,7 +397,6 @@ def fetch_youtube_video_bytes(url):
     if "YT_COOKIES" in st.secrets:
         try:
             fd, cookie_path = tempfile.mkstemp(suffix=".txt")
-            # Forziamo la scrittura in UTF-8 per evitare corruzioni di testo
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 f.write(st.secrets["YT_COOKIES"])
             ydl_opts['cookiefile'] = cookie_path
@@ -414,7 +412,6 @@ def fetch_youtube_video_bytes(url):
             os.remove(filepath) 
             return data
     except Exception as e:
-        # QUESTO È IL CUORE DEL DEBUG: Stampiamo il vero errore di YouTube
         st.error(f"🔍 DEBUG YT-DLP SERVER: {str(e)}") 
         return None
     finally:
