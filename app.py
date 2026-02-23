@@ -718,7 +718,7 @@ st.markdown("---")
 mode = st.sidebar.radio("Select Module:", [
     "1. Wargame Room (Simulation)", 
     "2. Social Data Analysis (Universal)", 
-    "3. Cognitive Editor (Text/Image/Audio)", 
+    "3. Cognitive Editor (Text/Image/Audio/Video)", 
     "4. Comparison Test (A/B Testing)",
     "5. Live Radar (RSS/Reddit)",
     "6. Deep Document Oracle (RAG)"
@@ -1805,3 +1805,4 @@ elif mode == "6. Deep Document Oracle (RAG)":
                         response = ask_document_oracle(st.session_state['doc_full_text'], prompt, key)
                         st.markdown(response)
                         st.session_state.doc_oracle_history.append({"role": "assistant", "content": response})
+
