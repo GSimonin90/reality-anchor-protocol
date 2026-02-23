@@ -393,6 +393,11 @@ def fetch_youtube_video_bytes(url):
         'outtmpl': os.path.join(tempfile.gettempdir(), 'yt_temp_vid_%(id)s.%(ext)s'),
         'noplaylist': True,
         'quiet': True,
+        'extractor_args': {'youtube': ['player_client=ios,android,web']},
+        'nocheckcertificate': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        }
     }
 
     if "YT_COOKIES" in st.secrets:
