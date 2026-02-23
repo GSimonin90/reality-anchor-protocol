@@ -390,31 +390,29 @@ from pytubefix import YouTube
 @st.cache_data(show_spinner=False)
 def fetch_youtube_video_bytes(url):
     try:
-        # Initializing pytubefix with automatic PO Token generation to bypass 403
-        yt = YouTube(url, use_po_token=True)
+        yt = YouTube(url, client='TV')
         
-        # Filtering for 'progressive' streams (video and audio already merged, usually 720p)
         stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
         
         if not stream:
-            st.error("🔍 DEBUG API: No progressive mp4 streams available for this video. YouTube might be blocking the format.")
+            yt = YouTube(url, client='ANDROID')
+            stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+            
+        if not stream:
+            st.error("🔍 DEBUG API: No progressive mp4 streams found. YouTube might be blocking this specific video format.")
             return None
             
-        # Downloading to a temporary directory on the Streamlit server
         temp_dir = tempfile.gettempdir()
         file_path = stream.download(output_path=temp_dir)
         
-        # Reading the bytes to pass them to Gemini
         with open(file_path, 'rb') as f:
             data = f.read()
             
-        # Cleaning up the server storage
         os.remove(file_path)
         return data
         
     except Exception as e:
-        # Catching any block or error in English for easy debugging
-        st.error(f"🔍 DEBUG API: Pytubefix encountered a fatal error. Exception: {str(e)}")
+        st.error(f"🔍 DEBUG API: Pytubefix error occurred: {str(e)}")
         return None
 
 # --- HELPER: PDF EXTRACTOR & SCRAPERS ---
