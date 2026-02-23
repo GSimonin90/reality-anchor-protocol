@@ -383,53 +383,38 @@ def generate_pdf_report(df, summary_text=None):
         os.unlink(chart_path)
     return bytes(pdf.output())
 
-import requests
+import os
+import tempfile
+from pytubefix import YouTube
 
 @st.cache_data(show_spinner=False)
 def fetch_youtube_video_bytes(url):
-    # Spoofing strict headers to bypass Cobalt's anti-bot/CORS protections
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-        "Origin": "https://cobalt.tools",
-        "Referer": "https://cobalt.tools/"
-    }
-    
-    # Keeping payload absolutely minimal to avoid 400 Bad Request schema errors
-    payload = {
-        "url": url
-    }
-    
-    api_url = "https://api.cobalt.tools/"
-    
     try:
-        response = requests.post(api_url, json=payload, headers=headers)
+        # Initializing pytubefix with automatic PO Token generation to bypass 403
+        yt = YouTube(url, use_po_token=True)
         
-        # Intercept 400 errors specifically to read the raw API complaint
-        if response.status_code == 400:
-            st.error(f"🔍 DEBUG API: Cobalt API rejected the payload structure. Raw response: {response.text}")
+        # Filtering for 'progressive' streams (video and audio already merged, usually 720p)
+        stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+        
+        if not stream:
+            st.error("🔍 DEBUG API: No progressive mp4 streams available for this video. YouTube might be blocking the format.")
             return None
             
-        response.raise_for_status()
-        data = response.json()
+        # Downloading to a temporary directory on the Streamlit server
+        temp_dir = tempfile.gettempdir()
+        file_path = stream.download(output_path=temp_dir)
         
-        if "url" in data:
-            direct_video_url = data["url"]
-            vid_response = requests.get(direct_video_url, stream=True)
-            vid_response.raise_for_status()
-            return vid_response.content
-        else:
-            error_msg = data.get('text', 'No video URL provided in the API response payload.')
-            st.error(f"🔍 DEBUG API: Cobalt returned success but missing target URL. Details: {error_msg}")
-            return None
+        # Reading the bytes to pass them to Gemini
+        with open(file_path, 'rb') as f:
+            data = f.read()
             
-    except requests.exceptions.HTTPError as e:
-        error_details = e.response.text if e.response else str(e)
-        st.error(f"🔍 DEBUG API: HTTP Error from Cobalt server. Details: {error_details}")
-        return None
+        # Cleaning up the server storage
+        os.remove(file_path)
+        return data
+        
     except Exception as e:
-        st.error(f"🔍 DEBUG API: Unexpected application error occurred: {str(e)}")
+        # Catching any block or error in English for easy debugging
+        st.error(f"🔍 DEBUG API: Pytubefix encountered a fatal error. Exception: {str(e)}")
         return None
 
 # --- HELPER: PDF EXTRACTOR & SCRAPERS ---
