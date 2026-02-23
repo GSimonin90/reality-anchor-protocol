@@ -383,45 +383,38 @@ def generate_pdf_report(df, summary_text=None):
         os.unlink(chart_path)
     return bytes(pdf.output())
 
+import requests
+
 @st.cache_data(show_spinner=False)
 def fetch_youtube_video_bytes(url):
-    cookie_path = None
-    
-    ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-        'outtmpl': os.path.join(tempfile.gettempdir(), 'yt_temp_vid_%(id)s.%(ext)s'),
-        'noplaylist': True,
-        'quiet': True,
-        'extractor_args': {'youtube': ['player_client=default,-android_sdkless']},
-        'nocheckcertificate': True
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
     }
-
-    if "YT_COOKIES" in st.secrets:
-        try:
-            fd, cookie_path = tempfile.mkstemp(suffix=".txt")
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                f.write(st.secrets["YT_COOKIES"])
-            ydl_opts['cookiefile'] = cookie_path
-        except Exception as e:
-            st.error(f"Errore caricamento cookie: {e}")
-
+    payload = {
+        "url": url,
+        "videoQuality": "720"
+    }
+    
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filepath = ydl.prepare_filename(info)
-            with open(filepath, 'rb') as f:
-                data = f.read()
-            os.remove(filepath) 
-            return data
+        response = requests.post("https://api.cobalt.tools/api/json", json=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        
+        if "url" in data:
+            direct_video_url = data["url"]
+            vid_response = requests.get(direct_video_url, stream=True)
+            vid_response.raise_for_status()
+            return vid_response.content
+        else:
+            error_msg = data.get('text', 'Unknown error from Cobalt')
+            st.error(f"Can't extract video from Cobalt API: {error_msg}")
+            return None
+            
     except Exception as e:
-        st.error(f"🔍 DEBUG YT-DLP SERVER: {str(e)}") 
+        st.error(f"🔍 DEBUG API:Connection error to Cobalt: {str(e)}")
         return None
-    finally:
-        if cookie_path and os.path.exists(cookie_path):
-            try:
-                os.remove(cookie_path)
-            except:
-                pass
 
 # --- HELPER: PDF EXTRACTOR & SCRAPERS ---
 @st.cache_data
