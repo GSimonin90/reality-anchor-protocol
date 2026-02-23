@@ -17,4 +17,5 @@ Pillow
 feedparser
 networkx
 yt-dlp
-requests
+pytubefix
+
