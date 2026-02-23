@@ -387,18 +387,20 @@ import requests
 
 @st.cache_data(show_spinner=False)
 def fetch_youtube_video_bytes(url):
+    # Using public Cobalt API to bypass Streamlit IP blocks
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
     }
+    
     payload = {
         "url": url,
         "videoQuality": "720"
     }
     
     try:
-        response = requests.post("https://api.cobalt.tools/api/json", json=payload, headers=headers)
+        response = requests.post("https://api.cobalt.tools/", json=payload, headers=headers)
         response.raise_for_status()
         data = response.json()
         
@@ -408,12 +410,16 @@ def fetch_youtube_video_bytes(url):
             vid_response.raise_for_status()
             return vid_response.content
         else:
-            error_msg = data.get('text', 'Unknown error from Cobalt')
-            st.error(f"Can't extract video from Cobalt API: {error_msg}")
+            error_msg = data.get('text', 'Unknown error from Cobalt API')
+            st.error(f"🔍 DEBUG API: External API failed to extract video. Response: {error_msg}")
             return None
             
+    except requests.exceptions.HTTPError as e:
+        error_details = e.response.text if e.response else str(e)
+        st.error(f"🔍 DEBUG API: Connection rejected by Cobalt. Details: {error_details}")
+        return None
     except Exception as e:
-        st.error(f"🔍 DEBUG API:Connection error to Cobalt: {str(e)}")
+        st.error(f"🔍 DEBUG API: Unexpected error occurred: {str(e)}")
         return None
 
 # --- HELPER: PDF EXTRACTOR & SCRAPERS ---
