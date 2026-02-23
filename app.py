@@ -948,7 +948,6 @@ elif mode == "2. Social Data Analysis (Universal)":
                         try:
                             from wordcloud import STOPWORDS
                             
-                            # --- MODIFICA WORDCLOUD: Filtro Stop-Words ITA/ENG ---
                             ita_stops = {
                                 "il", "lo", "la", "i", "gli", "le", "un", "uno", "una", "di", "a", "da", "in", "con", "su", "per", "tra", "fra", 
                                 "e", "o", "ma", "se", "perché", "non", "che", "chi", "cui", "mi", "ti", "ci", "vi", "si", "ho", "ha", "hanno", 
@@ -958,10 +957,8 @@ elif mode == "2. Social Data Analysis (Universal)":
                                 "anche", "tutto", "tutti", "solo", "fare", "fatto", "essere", "stato", "poi", "quando", "molto", "così", "quindi", 
                                 "dopo", "invece", "ancora", "già", "senza", "sempre", "ora", "qui", "lì", "quale", "cosa", "loro", "come"
                             }
-                            # Uniamo il filtro inglese di default con la nostra black-list italiana
                             custom_stops = set(STOPWORDS).union(ita_stops)
                             
-                            # Convertiamo il testo in minuscolo per evitare duplicati come "Governo" e "governo"
                             text_combined = " ".join(df['content'].astype(str).tolist()).lower()
                             
                             wc = WordCloud(width=400, height=200, background_color='black', colormap='Reds', random_state=42, stopwords=custom_stops).generate(text_combined)
@@ -1332,10 +1329,7 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio)":
                 media_type = "video"
                 st.video(media_inp)
             else:
-                yt_url_input = st.text_input("Paste YouTube URL here")
-                if yt_url_input:
-                    st.video(yt_url_input) 
-                    media_type = "video"
+                st.info("Please upload an MP4 or MOV file to start the forensic analysis.")
             
         go = st.button("Analyze, Sanitize & Scan AI", use_container_width=True, type="primary")
 
