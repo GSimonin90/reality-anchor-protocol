@@ -388,7 +388,8 @@ def fetch_youtube_video_bytes(url):
     cookie_path = None
     
     ydl_opts = {
-        'format': 'best[height<=720][ext=mp4]/best[ext=mp4]/best',
+        'format': 'bestvideo+bestaudio/best',
+        'merge_output_format': 'mp4',
         'outtmpl': os.path.join(tempfile.gettempdir(), 'yt_temp_vid_%(id)s.%(ext)s'),
         'noplaylist': True,
         'quiet': True,
