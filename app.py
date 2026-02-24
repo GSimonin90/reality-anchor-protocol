@@ -59,6 +59,19 @@ def get_cost_estimate():
     cost = (total_tokens / 1_000_000) * 0.20 
     return total_tokens, cost
 
+# --- HELPER: PII SANITIZER (PRIVACY REDACTION) ---
+def sanitize_pii(text):
+    if not isinstance(text, str): return text
+    # Redact Emails
+    text = re.sub(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', '[REDACTED_EMAIL]', text)
+    # Redact International Phone Numbers
+    text = re.sub(r'\b\+?\d{1,3}?[-.\s]?\(?\d{2,3}?\)?[-.\s]?\d{3}[-.\s]?\d{4}\b', '[REDACTED_PHONE]', text)
+    # Redact IBANs or Cards (Basic)
+    text = re.sub(r'\b[A-Z]{2}\d{2}[a-zA-Z0-9]{11,30}\b', '[REDACTED_IBAN]', text)
+    # Redact IP Addresses
+    text = re.sub(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', '[REDACTED_IP]', text)
+    return text
+
 # --- HELPER: CALLBACK FOR DATA EDITOR ---
 def update_editor_state(method_key):
     editor_key = f"editor_{method_key}"
@@ -818,6 +831,28 @@ if mode == "1. Wargame Room (Simulation)":
         infection_rate.append(np.mean(current))
         
     st.markdown("---")
+
+    with st.expander("View Neural Infection Network", expanded=False):
+        st.caption("Topological visualization of infection clusters.")
+        sample_size = min(150, n_agents)
+        
+        if topology == "Echo Chambers (Clusters)": G = nx.caveman_graph(5, sample_size // 5)
+        elif topology == "Influencer Network (Hubs)": G = nx.barabasi_albert_graph(sample_size, 2, seed=42)
+        else: G = nx.erdos_renyi_graph(sample_size, 0.05, seed=42)
+        
+        node_colors = []
+        for i in range(len(G.nodes())):
+            if current[i] > 0.8: node_colors.append('#ef4444') # Infected (Red)
+            elif current[i] > 0.3: node_colors.append('#f97316') # At risk (Orange)
+            else: node_colors.append('#3b82f6') # Healthy (Blue)
+            
+        fig_net, ax_net = plt.subplots(figsize=(10, 5))
+        pos = nx.spring_layout(G, k=0.15, iterations=20, seed=42)
+        nx.draw(G, pos, node_color=node_colors, edge_color='#e0e0e0', node_size=100, alpha=0.8, ax=ax_net)
+        ax_net.set_title(f"Network Topology State (Day {steps})")
+        st.pyplot(fig_net)
+    st.markdown("---")
+
     c_res1, c_res2 = st.columns([3, 1])
     with c_res1:
         st.subheader("Infection Spread (Heatmap)")
@@ -1166,6 +1201,52 @@ elif mode == "2. Social Data Analysis (Universal)":
                         st.altair_chart(line, use_container_width=True)
 
                 st.markdown("---")
+
+                # --- INTERACTIVE DYNAMIC TIMELINE ---
+                st.markdown("---")
+                st.subheader("Dynamic Timeline Filter")
+                view = adf.copy()
+                if 'timestamp' in view.columns:
+                    # Add the new column directly to 'view' instead of 'adf'
+                    view['parsed_time'] = pd.to_datetime(view['timestamp'], errors='coerce')
+                    valid_time_df = view.dropna(subset=['parsed_time'])
+                    
+                    if not valid_time_df.empty:
+                        min_time = valid_time_df['parsed_time'].min()
+                        max_time = valid_time_df['parsed_time'].max()
+                        
+                        # Show the timeline if there is at least some time difference
+                        if min_time != max_time:
+                            # Slider with hours and minutes instead of just days
+                            selected_times = st.slider(
+                                "Filter Analysis by Time Window", 
+                                min_value=min_time.to_pydatetime(), 
+                                max_value=max_time.to_pydatetime(), 
+                                value=(min_time.to_pydatetime(), max_time.to_pydatetime()),
+                                format="YYYY-MM-DD HH:mm"
+                            )
+                            # Now 'view' has the 'parsed_time' column, so this will work perfectly
+                            view = view[(view['parsed_time'] >= selected_times[0]) & (view['parsed_time'] <= selected_times[1])]
+                            
+                            timeline_data = valid_time_df[(valid_time_df['parsed_time'] >= selected_times[0]) & (valid_time_df['parsed_time'] <= selected_times[1])]
+                            
+                            # Group data by exact timestamp to show minute-by-minute peaks
+                            agg_time = timeline_data.groupby('parsed_time')['aggression'].mean().reset_index()
+                            agg_time.columns = ['Time', 'Avg Aggression']
+                            
+                            if not agg_time.empty:
+                                line_chart = alt.Chart(agg_time).mark_area(opacity=0.4, color='red').encode(
+                                    x='Time:T', y=alt.Y('Avg Aggression:Q', scale=alt.Scale(domain=[0, 10]))
+                                ) + alt.Chart(agg_time).mark_line(color='darkred', point=True).encode(
+                                    x='Time:T', y='Avg Aggression:Q', tooltip=['Time:T', 'Avg Aggression:Q']
+                                )
+                                st.altair_chart(line_chart, use_container_width=True)
+                        else:
+                            st.caption("Not enough time variance to build a dynamic timeline (all messages share the exact same second).")
+                    else:
+                        st.caption("Not enough valid dates to build a dynamic timeline.")
+                st.markdown("---")
+
                 st.subheader("Detailed Data Explorer")
                 c_filter1, c_filter2, c_filter3 = st.columns(3)
                 with c_filter1:
@@ -1445,41 +1526,39 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio/Video)":
 # MODULE 4: COMPARISON TEST (A/B TESTING)
 # ==========================================
 elif mode == "4. Comparison Test (A/B Testing)":
-    st.header("4. Comparison Test (A/B Testing)")
+    st.header("4. Universal Arena (A/B Testing)")
+    st.caption("Compare data from YouTube, CSV, or Raw Text to find the most aggressive narratives.")
     
     col_a, col_b = st.columns(2)
-    with col_a:
-        st.subheader("Dataset A (Left)")
-        url_a = st.text_input("YouTube URL A", key="url_a")
-    with col_b:
-        st.subheader("Dataset B (Right)")
-        url_b = st.text_input("YouTube URL B", key="url_b")
     
-    limit_scrape = st.number_input("Raw Comments to Fetch", 10, 1000, 50, help="How many comments to download initially.")
-    
-    if "GEMINI_API_KEY" in st.secrets: key = st.secrets["GEMINI_API_KEY"]
-    else: key = st.text_input("API Key", type="password")
-
-    if st.button("Step 1: Fetch Comments (Scrape Only)", type="primary"):
-        if url_a and url_b:
-            with st.spinner("Fetching raw data from both videos..."):
-                df_a = scrape_youtube_comments(url_a, limit_scrape)
-                if df_a is not None:
-                    df_a = detect_bot_activity(df_a)
-                    df_a.insert(0, "Select", False)
-                    st.session_state['data_store']['Arena']['df_a'] = df_a
-                
-                df_b = scrape_youtube_comments(url_b, limit_scrape)
-                if df_b is not None:
-                    df_b = detect_bot_activity(df_b)
-                    df_b.insert(0, "Select", False)
-                    st.session_state['data_store']['Arena']['df_b'] = df_b
-                
-                st.session_state['data_store']['Arena']['analyzed_a'] = None
-                st.session_state['data_store']['Arena']['analyzed_b'] = None
-                st.rerun()
-        else:
-            st.error("Please provide both URLs.")
+    def load_arena_data(key_prefix, column):
+        with column:
+            in_type = st.radio(f"Input {key_prefix}", ["YouTube Link", "CSV Upload", "Raw Text Paste"], horizontal=True, key=f"r_{key_prefix}")
+            df = None
+            if in_type == "YouTube Link":
+                url = st.text_input(f"YouTube URL {key_prefix}", key=f"url_{key_prefix}")
+                limit = st.number_input(f"Comments to Fetch {key_prefix}", 10, 1000, 50, key=f"lim_{key_prefix}")
+                if st.button(f"Scrape {key_prefix}", key=f"btn_yt_{key_prefix}"):
+                    with st.spinner(f"Scraping YouTube {key_prefix}..."):
+                        df = scrape_youtube_comments(url, limit)
+            elif in_type == "CSV Upload":
+                f = st.file_uploader(f"Upload CSV {key_prefix}", type="csv", key=f"f_{key_prefix}")
+                if f: df = normalize_dataframe(pd.read_csv(f))
+            else:
+                txt = st.text_area(f"Paste Data {key_prefix}", height=100, key=f"t_{key_prefix}")
+                if st.button(f"Process Text {key_prefix}", key=f"btn_txt_{key_prefix}"):
+                    if txt: df = parse_raw_paste(txt)
+                    
+            if df is not None:
+                df = detect_bot_activity(df)
+                if 'Select' not in df.columns: df.insert(0, "Select", False)
+                st.session_state['data_store']['Arena'][f'df_{key_prefix.lower()}'] = df
+                st.success(f"Loaded {len(df)} items in {key_prefix}.")
+            
+    st.subheader("Contender A (Left)")
+    load_arena_data("A", col_a)
+    st.subheader("Contender B (Right)")
+    load_arena_data("B", col_b)
 
     df_a_raw = st.session_state['data_store']['Arena']['df_a']
     df_b_raw = st.session_state['data_store']['Arena']['df_b']
@@ -1762,6 +1841,16 @@ elif mode == "6. Deep Document Oracle (RAG)":
         
         if 'doc_full_text' in st.session_state and st.session_state['doc_full_text']:
             st.divider()
+            
+            # --- PII SANITIZER ---
+            c_san1, c_san2 = st.columns([1, 3])
+            with c_san1:
+                if st.button("Sanitize Document (Redact PII)", help="Hides Emails, IPs, IBANs, and Phones before chatting with the Oracle"):
+                    with st.spinner("Sanitizing sensitive data..."):
+                        clean_text = sanitize_pii(st.session_state['doc_full_text'])
+                        st.session_state['doc_full_text'] = clean_text
+                        st.success("Document successfully sanitized!")
+            # ------------------------------
             
             # --- MODIFICA KNOWLEDGE GRAPH (Modulo 6) ---
             with st.expander("Extract Document Power Network (Knowledge Graph)", expanded=False):
