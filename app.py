@@ -926,6 +926,66 @@ if mode == "1. Wargame Room (Simulation)":
         delta = final_rate - (infection_rate[0] * 100)
         st.metric("Final Infection Level", f"{final_rate:.1f}%", f"{delta:.1f}%", delta_color="inverse")
 
+    # --- PDF EXPORT FOR WARGAME ---
+    st.markdown("---")
+    st.subheader("Export Tactical Report")
+    st.caption("Generate a summary document with the simulation parameters and results.")
+    
+    if st.button("Generate Wargame PDF", type="primary"):
+        with st.spinner("Compiling the report..."):
+            pdf = PDFReport()
+            pdf.add_page()
+            pdf.set_auto_page_break(auto=True, margin=15)
+            
+            # Wargame specific header
+            pdf.set_font("Helvetica", 'B', 14)
+            pdf.cell(0, 10, "Simulation Dossier: Information Warfare", 0, 1)
+            pdf.ln(5)
+            
+            # Section 1: Parameters
+            pdf.set_font("Helvetica", 'B', 12)
+            pdf.cell(0, 10, "Base Scenario Parameters:", 0, 1)
+            pdf.set_font("Helvetica", '', 11)
+            pdf.cell(0, 8, f"- Network Topology: {topology}", 0, 1)
+            pdf.cell(0, 8, f"- Population Size: {n_agents} nodes", 0, 1)
+            pdf.cell(0, 8, f"- Initial Infection Rate (Patient Zero): {bot_pct*100:.1f}%", 0, 1)
+            pdf.cell(0, 8, f"- Blue Team Countermeasure: {defense}", 0, 1)
+            pdf.cell(0, 8, f"- Time Horizon: {steps} cycles (days)", 0, 1)
+            pdf.ln(5)
+            
+            # Section 2: Results
+            pdf.set_font("Helvetica", 'B', 12)
+            pdf.cell(0, 10, "Operation Results & Impact:", 0, 1)
+            pdf.set_font("Helvetica", '', 11)
+            pdf.cell(0, 8, f"- Final Infection Rate: {final_rate:.1f}%", 0, 1)
+            pdf.cell(0, 8, f"- Net Variation (Delta): {delta:.1f}%", 0, 1)
+            pdf.ln(5)
+            
+            # Section 3: Automated Assessment
+            pdf.set_font("Helvetica", 'B', 12)
+            pdf.cell(0, 10, "Strategic Assessment:", 0, 1)
+            pdf.set_font("Helvetica", 'I', 11)
+            
+            if delta > 5:
+                esito = "CRITICAL: The adopted countermeasure proved ineffective. The cognitive infection spread aggressively, bypassing network defenses."
+            elif delta < -5:
+                esito = "SUCCESS: The countermeasure had an excellent containment impact, drastically reducing the presence of the informational pathogen."
+            else:
+                esito = "STABLE: The situation remained mostly unchanged. Defenses held the initial shockwave but failed to eradicate the threat."
+                
+            # Clean encoding for FPDF
+            pdf.multi_cell(0, 6, esito.encode('latin-1', 'replace').decode('latin-1'))
+            
+            pdf_bytes = bytes(pdf.output())
+            
+        st.download_button(
+            label="Download Wargame Report (PDF)", 
+            data=pdf_bytes, 
+            file_name=f"RAP_Wargame_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf", 
+            mime="application/pdf", 
+            type="primary"
+        )
+
 # ==========================================
 # MODULE 2: SOCIAL DATA ANALYSIS
 # ==========================================
@@ -1897,6 +1957,71 @@ elif mode == "4. Comparison Test (A/B Testing)":
         with st.expander("Detailed Comparison Data"):
             st.dataframe(combined[['Source', 'content', 'aggression', 'fallacy_type', 'is_bot']])
 
+        # --- PDF EXPORT FOR ARENA (A/B TESTING) ---
+        st.markdown("---")
+        st.subheader("Export Battle Report")
+        st.caption("Generate a comparative PDF dossier detailing the metrics between Contender A and Contender B.")
+        
+        if st.button("Generate Arena PDF", type="primary"):
+            with st.spinner("Compiling the comparative report..."):
+                pdf = PDFReport()
+                pdf.add_page()
+                pdf.set_auto_page_break(auto=True, margin=15)
+                
+                # Arena specific header
+                pdf.set_font("Helvetica", 'B', 14)
+                pdf.cell(0, 10, "Comparative Dossier: Narrative A/B Testing", 0, 1)
+                pdf.ln(5)
+                
+                # Section 1: Contender A Profile
+                pdf.set_font("Helvetica", 'B', 12)
+                pdf.cell(0, 10, "Contender A Profile:", 0, 1)
+                pdf.set_font("Helvetica", '', 11)
+                pdf.cell(0, 8, f"- Analyzed Items: {len(res_df_a)}", 0, 1)
+                pdf.cell(0, 8, f"- Average Aggression: {agg_a:.1f}/10", 0, 1)
+                pdf.cell(0, 8, f"- Detected Bots: {bots_a}", 0, 1)
+                pdf.cell(0, 8, f"- Logical Fallacies Flagged: {fallacy_a}", 0, 1)
+                pdf.ln(5)
+
+                # Section 2: Contender B Profile
+                pdf.set_font("Helvetica", 'B', 12)
+                pdf.cell(0, 10, "Contender B Profile:", 0, 1)
+                pdf.set_font("Helvetica", '', 11)
+                pdf.cell(0, 8, f"- Analyzed Items: {len(res_df_b)}", 0, 1)
+                pdf.cell(0, 8, f"- Average Aggression: {agg_b:.1f}/10", 0, 1)
+                pdf.cell(0, 8, f"- Detected Bots: {bots_b}", 0, 1)
+                pdf.cell(0, 8, f"- Logical Fallacies Flagged: {fallacy_b}", 0, 1)
+                pdf.ln(5)
+                
+                # Section 3: Tactical Conclusion
+                pdf.set_font("Helvetica", 'B', 12)
+                pdf.cell(0, 10, "Tactical Conclusion:", 0, 1)
+                pdf.set_font("Helvetica", 'I', 11)
+                
+                if agg_a > agg_b + 1.5:
+                    conclusion = "Contender A exhibits a significantly higher level of hostility and aggression. It poses a greater immediate risk for polarization."
+                elif agg_b > agg_a + 1.5:
+                    conclusion = "Contender B exhibits a significantly higher level of hostility and aggression. It poses a greater immediate risk for polarization."
+                else:
+                    conclusion = "Both contenders present comparable levels of aggression. The threat level is balanced between the two narratives."
+                    
+                if bots_a > bots_b:
+                    conclusion += f" Furthermore, Contender A shows higher signs of inauthentic/bot activity (+{delta_bots})."
+                elif bots_b > bots_a:
+                    conclusion += f" Furthermore, Contender B shows higher signs of inauthentic/bot activity (+{abs(delta_bots)})."
+
+                pdf.multi_cell(0, 6, conclusion.encode('latin-1', 'replace').decode('latin-1'))
+                
+                pdf_bytes_arena = bytes(pdf.output())
+                
+            st.download_button(
+                label="Download Arena Report (PDF)", 
+                data=pdf_bytes_arena, 
+                file_name=f"RAP_Arena_Match_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf", 
+                mime="application/pdf", 
+                type="primary"
+            )
+
 # ==========================================
 # MODULE 5: LIVE RADAR (RSS/REDDIT)
 # ==========================================
@@ -1914,7 +2039,7 @@ elif mode == "5. Live Radar (RSS/Reddit)":
         max_entries = st.number_input("Entries to Fetch", 5, 50, 15)
         fetch_btn = st.button("Step 1: Fetch Live Feed", type="primary", use_container_width=True)
     # --- AUTOMATED ALERT CONFIGURATION ---
-    with st.expander("🔔 Automated Alert Configuration (Webhook/Slack)"):
+    with st.expander("Automated Alert Configuration (Webhook/Slack)"):
         alert_webhook = st.text_input("Webhook URL", placeholder="https://hooks.slack.com/services/...", help="If Aggression > 8.0, an alert payload will be dispatched here.")
         alert_email = st.text_input("Alert Email", placeholder="analyst@agency.com")
         st.caption("Note: System will dispatch emergency protocols if average aggression spikes above 8.0/10.")
