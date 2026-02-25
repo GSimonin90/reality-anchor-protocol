@@ -4,7 +4,6 @@ numpy
 matplotlib
 altair
 vl-convert-python
-datasets
 pyarrow
 fastparquet
 google-genai
@@ -16,3 +15,4 @@ openpyxl
 Pillow
 feedparser
 networkx
+plotly
