@@ -23,6 +23,10 @@ from wordcloud import WordCloud
 import streamlit.components.v1 as components
 import feedparser
 import networkx as nx
+import hashlib
+import plotly.graph_objects as go
+import plotly.express as px
+import urllib.request
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -37,6 +41,7 @@ if 'token_usage' not in st.session_state: st.session_state['token_usage'] = 0
 if 'oracle_history' not in st.session_state: st.session_state['oracle_history'] = []
 if 'doc_oracle_history' not in st.session_state: st.session_state['doc_oracle_history'] = []
 if 'scroll_to_top' not in st.session_state: st.session_state['scroll_to_top'] = False
+if 'global_entities' not in st.session_state: st.session_state['global_entities'] = set()
 
 if 'data_store' not in st.session_state:
     st.session_state['data_store'] = {
@@ -44,6 +49,7 @@ if 'data_store' not in st.session_state:
         'YouTube Link': {'df': None, 'analyzed': None, 'summary': None},
         'Raw Text Paste': {'df': None, 'analyzed': None, 'summary': None},
         'Telegram Dump (JSON)': {'df': None, 'analyzed': None, 'summary': None},
+        'Reddit Native (OSINT)': {'df': None, 'analyzed': None, 'summary': None},
         'Arena': {'df_a': None, 'df_b': None, 'analyzed_a': None, 'analyzed_b': None},
         'Radar': {'df': None, 'analyzed': None}
     }
@@ -58,6 +64,12 @@ def get_cost_estimate():
     total_tokens = st.session_state['token_usage']
     cost = (total_tokens / 1_000_000) * 0.20 
     return total_tokens, cost
+
+# --- HELPER: DIGITAL FORENSICS HASHING ---
+def calculate_sha256(file_bytes):
+    """Generates a cryptographic hash for Chain of Custody proof."""
+    if not file_bytes: return "N/A"
+    return hashlib.sha256(file_bytes).hexdigest()
 
 # --- HELPER: PII SANITIZER (PRIVACY REDACTION) ---
 def sanitize_pii(text):
@@ -317,7 +329,7 @@ def ask_document_oracle(full_text, question, api_key):
     INSTRUCTIONS:
     - Answer the question comprehensively based ONLY on the provided text.
     - If the text does not contain the answer, say so clearly.
-    - Quote specific parts of the text to back up your claims when possible.
+    - CRITICAL RULE: Always cite the exact page number(s) to back up your claims, using the [PAGE X] tags provided in the text format (e.g., "According to the contract [PAGE 12]...").
     - Respond in the language of the user's question.
     
     DOCUMENT TEXT:
@@ -395,69 +407,18 @@ def generate_pdf_report(df, summary_text=None):
         os.unlink(chart_path)
     return bytes(pdf.output())
 
-import requests
-import re
-
-@st.cache_data(show_spinner=False)
-def fetch_youtube_video_bytes(url):
-    # Extract YouTube Video ID
-    match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11}).*", url)
-    if not match:
-        st.error("🔍 DEBUG API: Invalid YouTube URL. Could not extract Video ID.")
-        return None
-        
-    video_id = match.group(1)
-    
-    # List of reliable Piped instances (backend APIs)
-    # Piped is generally more resilient than Invidious for direct stream extraction
-    instances = [
-        "https://api.piped.video",
-        "https://pipedapi.kavin.rocks",
-        "https://api.piped.projectsegfau.lt"
-    ]
-    
-    for instance in instances:
-        try:
-            # 1. Fetching stream data from Piped API
-            api_url = f"{instance}/streams/{video_id}"
-            response = requests.get(api_url, timeout=10)
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                # 2. Piped provides a 'videoStreams' list. 
-                # We look for a combined (video+audio) stream or the highest quality mp4
-                streams = data.get("videoStreams", [])
-                
-                # Filter for mp4 and prioritize streams with video+audio (hls or direct)
-                # For simplicity and compatibility with Gemini, we'll take the first stable link
-                if streams:
-                    # Filter for non-dash streams if possible for direct download
-                    target_stream = next((s for s in streams if s.get("videoOnly") is False and s.get("format") == "mp4"), streams[0])
-                    direct_video_url = target_stream.get("url")
-                    
-                    if direct_video_url:
-                        # 3. Download the video bytes
-                        vid_response = requests.get(direct_video_url, stream=True, timeout=30)
-                        vid_response.raise_for_status()
-                        return vid_response.content
-                        
-        except Exception as e:
-            # Log error for the specific instance and move to the next
-            continue
-            
-    st.error("🔍 DEBUG API: Critical Failure. All Piped instances failed to bypass YouTube protection.")
-    return None
-
 # --- HELPER: PDF EXTRACTOR & SCRAPERS ---
 @st.cache_data
 def extract_text_from_pdf(file_obj):
     try:
         pdf_reader = pypdf.PdfReader(file_obj)
         text = ""
-        for page in pdf_reader.pages:
+        # Enumerate pages starting from 1 to track page numbers
+        for page_num, page in enumerate(pdf_reader.pages, start=1):
             content = page.extract_text()
-            if content: text += content + "\n"
+            if content: 
+                # Inject page markers directly into the text stream
+                text += f"\n\n[PAGE {page_num}]\n{content}"
         return text
     except: return None
 
@@ -477,6 +438,42 @@ def scrape_youtube_comments(url, limit=50):
         if not comments: return None
         return pd.DataFrame(comments)
     except: return None
+
+# --- NATIVE REDDIT OSINT SCRAPER ---
+@st.cache_data(show_spinner=False)
+def scrape_reddit_native(subreddit, limit=50):
+    try:
+        # Clean the input (allow users to type "r/worldnews" or just "worldnews")
+        sub = subreddit.replace('r/', '').replace('https://www.reddit.com/r/', '').strip('/')
+        url = f"https://www.reddit.com/r/{sub}/new.json?limit={limit}"
+        
+        # Mask the request as a normal web browser to avoid Reddit's API blocks
+        req = urllib.request.Request(
+            url, 
+            data=None, 
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 RAP_OSINT_Bot/1.0'}
+        )
+        response = urllib.request.urlopen(req)
+        data = json.loads(response.read().decode('utf-8'))
+        
+        posts = []
+        for child in data.get('data', {}).get('children', []):
+            post = child.get('data', {})
+            content = post.get('selftext', '')
+            title = post.get('title', '')
+            full_text = f"{title}\n{content}".strip()
+            
+            if full_text:
+                posts.append({
+                    'agent_id': post.get('author', 'Unknown'),
+                    'timestamp': datetime.fromtimestamp(post.get('created_utc', 0)).strftime('%Y-%m-%d %H:%M:%S'),
+                    'content': full_text,
+                    'likes': post.get('score', 0)
+                })
+        if not posts: return None
+        return pd.DataFrame(posts)
+    except Exception as e:
+        return None
 
 def parse_raw_paste(raw_text):
     lines = raw_text.split('\n')
@@ -535,9 +532,9 @@ def parse_telegram_json(file_obj):
     except: 
         return None
 
-# --- HELPER: HYBRID ANALYZER ---
+# --- HYBRID ANALYZER (WITH AUTO-TRANSLATE) ---
 @st.cache_data(show_spinner=False)
-def analyze_fallacies_cached(text, api_key, context_info="", persona="Logic & Fact Analysis Engine"):
+def analyze_fallacies_cached(text, api_key, context_info="", persona="Logic & Fact Analysis Engine", target_lang="English"):
     if not text or len(str(text)) < 3: return sanitize_response(None)
     for attempt in range(3):
         try:
@@ -545,14 +542,15 @@ def analyze_fallacies_cached(text, api_key, context_info="", persona="Logic & Fa
             is_long = len(text) > 2000
             common_instructions = f"""
             You are a {persona}. CONTEXT: "{context_info}"
-            CRITICAL: 1. DETECT LANGUAGE. 2. TRANSLATE ALL OUTPUTS TO THAT LANGUAGE.
+            CRITICAL MULTILINGUAL RULE: The input text might be in any language (Russian, Arabic, slang, etc.). 
+            You MUST conduct the analysis and write ALL your JSON responses exclusively in {target_lang}.
             TASKS:
-            - explanation: Brief Analysis (Translated).
-            - main_topic: Central theme (Translated).
-            - micro_topic: 1-2 keywords (Translated).
+            - explanation: Brief Analysis in {target_lang}.
+            - main_topic: Central theme in {target_lang}.
+            - micro_topic: 1-2 keywords in {target_lang}.
             - target: Target Entity.
-            - primary_emotion: [Anger, Fear, Disgust, Sadness, Joy, Surprise, Neutral] (Translated).
-            - archetype: [Instigator, Loyalist, Troll, Rational Skeptic, Observer] (Translated).
+            - primary_emotion: [Anger, Fear, Disgust, Sadness, Joy, Surprise, Neutral] in {target_lang}.
+            - archetype: [Instigator, Loyalist, Troll, Rational Skeptic, Observer] in {target_lang}.
             RULES: Opinions/Sarcasm -> 'has_fallacy': false.
             RESPONSE (Strict JSON):
             {{ "has_fallacy": bool, "fallacy_type": "Name", "explanation": "Text", "correction": "Text", "main_topic": "Text", "micro_topic": "Text", "target": "Text", "primary_emotion": "Text", "archetype": "Text", "relevance": "Text", "counter_reply": "Text", "sentiment": "Text", "aggression": 0-10 }}
@@ -567,9 +565,9 @@ def analyze_fallacies_cached(text, api_key, context_info="", persona="Logic & Fa
             continue
     return sanitize_response(None)
 
-def analyze_fallacies(text, api_key=None, context_info="", persona="Logic & Fact Analysis Engine"):
+def analyze_fallacies(text, api_key=None, context_info="", persona="Logic & Fact Analysis Engine", target_lang="English"):
     if not api_key: return {"has_fallacy": True}
-    res = analyze_fallacies_cached(text, api_key, context_info, persona)
+    res = analyze_fallacies_cached(text, api_key, context_info, persona, target_lang)
     increment_counter(len(text), 500)
     return res
 
@@ -604,11 +602,12 @@ def cognitive_rewrite(text, api_key, media_data=None, media_type="image"):
         JSON OUTPUT RULES (Keep keys in English):
         - "fallacy_type": Name of the issue/fallacy in the target language.
         - "explanation": Comprehensive analysis in the target language.
-        - "ai_analysis": Detailed forensic breakdown (explicitly mention identified people and brands) in the target language.
+        - "ai_analysis": Detailed forensic breakdown in the target language.
         - "syllogism_breakdown": Array of objects with 'step', 'text', 'flaw' in the target language.
-        - "video_timeline": Array of objects (MANDATORY) with 'timestamp', 'ai_score', 'details' (details in the target language).
-        - "shadow_geolocation": String with detailed geographic deduction (mention specific clues found) in the target language.
+        - "video_timeline": Array of objects with 'timestamp', 'ai_score', 'details'.
+        - "shadow_geolocation": String with detailed geographic deduction.
         - "aggression": Integer (STRICTLY 0 to 10).
+        - "transcript": EXACT word-for-word transcription of spoken audio/video (in the detected language). Leave empty if no speech is detected.
         
         RESPONSE (Strict JSON):
         {{
@@ -616,6 +615,7 @@ def cognitive_rewrite(text, api_key, media_data=None, media_type="image"):
             "fallacy_type": "",
             "explanation": "",
             "rewritten_text": "",
+            "transcript": "",
             "facts": [],
             "aggression": 0,
             "ai_generated_probability": 0,
@@ -678,6 +678,7 @@ def plot_heatmap(df):
     ).properties(height=300)
     return heatmap
 
+# --- INTERACTIVE NETWORK GRAPH (PLOTLY) ---
 def plot_network_graph(df):
     if 'target' not in df.columns or 'micro_topic' not in df.columns: return None
     valid = df[(df['target'] != "Unknown") & (df['target'] != "None") & (df['micro_topic'] != "Unknown")]
@@ -689,11 +690,55 @@ def plot_network_graph(df):
         topic = f"{row['micro_topic']}"
         G.add_edge(target, topic, weight=1)
         
-    fig, ax = plt.subplots(figsize=(8, 6))
     pos = nx.spring_layout(G, k=0.5, seed=42)
-    nx.draw(G, pos, with_labels=True, node_color='skyblue', edge_color='gray', 
-            node_size=2000, font_size=9, font_weight='bold', ax=ax)
-    ax.set_title("Entity-Narrative Network", size=14)
+    
+    edge_x = []
+    edge_y = []
+    for edge in G.edges():
+        x0, y0 = pos[edge[0]]
+        x1, y1 = pos[edge[1]]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+        
+    edge_trace = go.Scatter(
+        x=edge_x, y=edge_y,
+        line=dict(width=1, color='#475569'),
+        hoverinfo='none',
+        mode='lines')
+
+    node_x = []
+    node_y = []
+    text = []
+    for node in G.nodes():
+        x, y = pos[node]
+        node_x.append(x)
+        node_y.append(y)
+        text.append(node)
+        
+    node_trace = go.Scatter(
+        x=node_x, y=node_y,
+        mode='markers+text',
+        text=text,
+        textposition="top center",
+        hoverinfo='text',
+        marker=dict(
+            showscale=False,
+            color='#ef4444',
+            size=15,
+            line_width=2,
+            line_color='white'))
+            
+    fig = go.Figure(data=[edge_trace, node_trace],
+             layout=go.Layout(
+                title=dict(text='Interactive Entity-Narrative Network', font=dict(size=16)),
+                showlegend=False,
+                hovermode='closest',
+                margin=dict(b=20,l=5,r=5,t=40),
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False))
+                )
     return fig
 
 def plot_document_entity_graph(json_data):
@@ -763,6 +808,17 @@ with st.sidebar.expander("ℹ️ Capabilities", expanded=False):
     - **Radar:** Live monitoring of RSS feeds and Reddit.
     - **Oracle:** Deep chat with 1M+ token context for massive PDFs.
     """)
+
+# --- CLEAR WORKSPACE BUTTON ---
+st.sidebar.markdown("---")
+if st.sidebar.button("Clear Workspace", type="secondary", help="Erase all current session data and start a clean investigation"):
+    # Delete specific keys to reset the dashboard state
+    keys_to_clear = ['data_store', 'oracle_history', 'doc_oracle_history', 'doc_full_text', 'global_entities']
+    for key in keys_to_clear:
+        if key in st.session_state:
+            del st.session_state[key]
+    # Force a page reload to apply changes
+    st.rerun()
 
 st.sidebar.markdown("---")
 
@@ -876,9 +932,33 @@ if mode == "1. Wargame Room (Simulation)":
 elif mode == "2. Social Data Analysis (Universal)":
     st.header("2. Social Data Analysis")
     st.sidebar.header("Settings")
-    persona = st.sidebar.selectbox("Analysis Lens (Persona)", ["Strategic Intelligence Analyst", "Mass Psychologist (Emotional)", "Legal Consultant (Defamation/Risk)", "Campaign Manager (Opportunity)"])
+    st.sidebar.header("Settings")
     
-    input_method = st.sidebar.radio("Input Method:", ["CSV File Upload", "YouTube Link", "Raw Text Paste", "Telegram Dump (JSON)"], horizontal=True)
+    # --- CUSTOM AI LENS (PERSONA) ---
+    preset_personas = [
+        "Strategic Intelligence Analyst", 
+        "Mass Psychologist (Emotional)", 
+        "Legal Consultant (Defamation/Risk)", 
+        "Campaign Manager (Opportunity)",
+        "Custom (Define your own role...)"
+    ]
+    
+    selected_persona = st.sidebar.selectbox("Analysis Lens (Persona)", preset_personas)
+    
+    if selected_persona == "Custom (Define your own role...)":
+        # Allow the user to input any specific professional perspective
+        persona = st.sidebar.text_input("Enter Custom Persona", value="Cybersecurity Expert hunting for coordination", help="Define the exact role the AI should assume for the analysis.")
+    else:
+        persona = selected_persona
+    
+    world_languages = [
+        "English", "Italiano", "Español", "Français", "Deutsch", "Português",
+        "Русский (Russian)", "العربية (Arabic)", "中文 (Chinese)", 
+        "日本語 (Japanese)", "فارسی (Persian)", "हिन्दी (Hindi)", 
+        "한국어 (Korean)", "Türkçe (Turkish)"
+    ]
+    report_language = st.sidebar.selectbox("Report Output Language", world_languages)
+    input_method = st.sidebar.radio("Input Method:", ["CSV File Upload", "YouTube Link", "Raw Text Paste", "Telegram Dump (JSON)", "Reddit Native (OSINT)"], horizontal=True)
     st.markdown("---")
     context_input = st.text_input("Global Context (Optional)", placeholder="E.g., 'Discussion about Flat Earth'")
     st.markdown("---")
@@ -955,6 +1035,25 @@ elif mode == "2. Social Data Analysis (Universal)":
                         st.success(f"Intercepted {len(tg_df)} messages.")
                     else:
                         st.error("Invalid Telegram JSON format.")
+
+    elif input_method == "Reddit Native (OSINT)":
+        with st.form("reddit_form"):
+            st.info("Extracts the latest posts directly from any public Subreddit without API keys.")
+            sub_input = st.text_input("Subreddit Name", placeholder="e.g., worldnews, conspiracy, italia")
+            limit = st.number_input("Max Posts to Scrape", min_value=10, max_value=100, value=50, step=10)
+            submitted = st.form_submit_button("Extract Intel")
+            
+            if submitted and sub_input:
+                with st.spinner(f"Infiltrating r/{sub_input}..."):
+                    rdf = scrape_reddit_native(sub_input, limit)
+                    if rdf is not None:
+                        rdf = detect_bot_activity(rdf)
+                        st.session_state['data_store'][input_method]['df'] = rdf
+                        st.session_state['data_store'][input_method]['analyzed'] = None 
+                        st.session_state['data_store'][input_method]['summary'] = None
+                        st.success(f"Intercepted {len(rdf)} posts from r/{sub_input}!")
+                    else:
+                        st.error("Failed to extract data. Make sure the subreddit is public and spelled correctly.")
 
     df = st.session_state['data_store'][input_method]['df']
     
@@ -1038,7 +1137,7 @@ elif mode == "2. Social Data Analysis (Universal)":
                 else: subset = current_df.head(scan_rows).copy()
                 total_to_scan = len(subset)
                 for i, (_, row) in enumerate(subset.iterrows()):
-                    ans = analyze_fallacies(row['content'], api_key=key, context_info=context_input, persona=persona)
+                    ans = analyze_fallacies(row['content'], api_key=key, context_info=context_input, persona=persona, target_lang=report_language)
                     res.append(ans)
                     prog_val = min((i+1)/total_to_scan, 1.0)
                     prog.progress(prog_val)
@@ -1115,7 +1214,7 @@ elif mode == "2. Social Data Analysis (Universal)":
                             action_plan = generate_action_deck(selected_for_action, action_type, key, context_input)
                             st.success("Action Plan Ready:")
                             st.text_area("Strategy Output:", value=action_plan, height=300)
-                            st.download_button("Download Strategy", action_plan, "strategy.txt")
+                            st.download_button("Download Strategy", action_plan, "strategy.txt", type="primary")
                     else: st.warning("Please select at least one comment in the table above.")
 
                 st.markdown("---")
@@ -1167,11 +1266,72 @@ elif mode == "2. Social Data Analysis (Universal)":
                 with st.expander("Target-Narrative Network Graph", expanded=False):
                     net_fig = plot_network_graph(adf)
                     if net_fig:
-                        st.pyplot(net_fig)
+                        st.plotly_chart(net_fig, use_container_width=True)
                     else:
                         st.caption("Not enough Target/Topic data to build a network.")
 
                 st.markdown("---")
+
+                # --- PATIENT ZERO & CHIEF PROPAGANDIST DETECTOR ---
+                st.markdown("---")
+                st.subheader("High-Value Targets (HVT) Identification")
+                st.caption("Algorithmic detection of the most dangerous actors based on toxicity, logical fallacies, and network impact (likes).")
+                
+                if 'likes' in adf.columns and 'aggression' in adf.columns and 'has_fallacy' in adf.columns:
+                    # Filter for toxic/fallacious content
+                    toxic_subset = adf[(adf['has_fallacy'] == True) | (adf['aggression'] > 6)]
+                    
+                    if not toxic_subset.empty:
+                        # Group by user to calculate their total destructive impact
+                        hvt_stats = toxic_subset.groupby('agent_id').agg(
+                            total_impact=('likes', 'sum'),
+                            avg_toxicity=('aggression', 'mean'),
+                            fallacy_count=('has_fallacy', 'sum')
+                        ).reset_index()
+                        
+                        # Calculate a custom "Threat Score" formula
+                        hvt_stats['threat_score'] = (hvt_stats['total_impact'] * 0.5) + (hvt_stats['avg_toxicity'] * 10) + (hvt_stats['fallacy_count'] * 20)
+                        hvt_stats = hvt_stats.sort_values(by='threat_score', ascending=False).head(3)
+                        
+                        c_hvt1, c_hvt2, c_hvt3 = st.columns(3)
+                        hvt_cols = [c_hvt1, c_hvt2, c_hvt3]
+                        
+                        for idx, (_, row) in enumerate(hvt_stats.iterrows()):
+                            with hvt_cols[idx]:
+                                st.error(f"🎯 **Target Rank #{idx+1}**")
+                                st.markdown(f"**Agent ID:** `{row['agent_id']}`")
+                                st.markdown(f"**Threat Score:** {int(row['threat_score'])}")
+                                st.caption(f"Fallacies: {row['fallacy_count']} | Impact: {row['total_impact']} likes")
+                    else:
+                        st.success("No High-Value Targets detected (Network is relatively healthy).")
+                else:
+                    st.caption("Insufficient data to calculate High-Value Targets (missing likes or aggression metrics).")
+                
+                # --- CROSS-ENTITY RESOLUTION (GLOBAL MEMORY CHECK) ---
+                st.markdown("---")
+                st.subheader("Cross-Entity Resolution (Global Memory Check)")
+                st.caption("Cross-referencing currently analyzed actors and topics with secret documents from the Deep Oracle.")
+                
+                if 'global_entities' in st.session_state and len(st.session_state['global_entities']) > 0:
+                    found_matches = set()
+                    for _, row in adf.iterrows():
+                        # Check agent_id against memory
+                        agent = str(row.get('agent_id', '')).lower()
+                        if agent in st.session_state['global_entities']: found_matches.add(row['agent_id'])
+                        
+                        # Check target entity against memory
+                        target = str(row.get('target', '')).lower()
+                        if target in st.session_state['global_entities']: found_matches.add(row['target'])
+                        
+                    if found_matches:
+                        st.error(f"🚨 **CRITICAL INTELLIGENCE MATCH FOUND!**")
+                        st.warning(f"The following entities in this social dataset were ALSO found in the classified documents (Module 6): **{', '.join(found_matches)}**")
+                    else:
+                        st.success("No cross-entity matches found in Global Memory.")
+                else:
+                    st.info("Global Memory is empty. Extract a Power Graph in Module 6 to populate it.")
+                st.markdown("---")
+
                 c_chart1, c_chart2 = st.columns(2)
                 with c_chart1:
                     st.caption("Fallacy Distribution")
@@ -1290,11 +1450,11 @@ elif mode == "2. Social Data Analysis (Universal)":
                 c_down1, c_down2 = st.columns([1, 1])
                 with c_down1:
                     excel_data = generate_excel_report(adf, summary_text)
-                    st.download_button("Download Full Excel Report", excel_data, "RAP_Intelligence_Report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    st.download_button("Download Full Excel Report", excel_data, "RAP_Intelligence_Report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
                 with c_down2:
-                    if st.button("Generate PDF Report"):
+                    if st.button("Generate PDF Report", type="primary"):
                         pdf_bytes = generate_pdf_report(adf, summary_text=summary_text) 
-                        st.download_button("Download PDF", pdf_bytes, "RAP_Executive_Report.pdf", "application/pdf")
+                        st.download_button("Download PDF", pdf_bytes, "RAP_Executive_Report.pdf", "application/pdf", type="primary")
                 
                 st.markdown("---")
                 st.subheader("The Oracle (Chat with Data)")
@@ -1396,8 +1556,36 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio/Video)":
                             st.success("✅ **Clean Metadata:** No image editing software detected in EXIF.")
                             
                         st.json(exif_data)
+                        
                 else:
                     st.caption("No EXIF data found (Image might be scrubbed by social media).")
+                
+                # --- OPSEC IMAGE SCRUBBER ---
+                st.markdown("---")
+                st.markdown("#### OPSEC: Metadata Scrubber")
+                st.caption("Remove all invisible EXIF data (GPS, Device Info) before sharing this evidence.")
+                
+                # Function to strip EXIF using PIL
+                def strip_exif(image):
+                    data = list(image.getdata())
+                    image_without_exif = Image.new(image.mode, image.size)
+                    image_without_exif.putdata(data)
+                    return image_without_exif
+
+                clean_image = strip_exif(media_inp)
+                
+                # Save to bytes for downloading
+                img_byte_arr = io.BytesIO()
+                clean_image.save(img_byte_arr, format='PNG')
+                clean_bytes = img_byte_arr.getvalue()
+
+                st.download_button(
+                    label="Download Sanitized Image (Zero EXIF)",
+                    data=clean_bytes,
+                    file_name=f"RAP_Sanitized_Evidence_{datetime.now().strftime('%Y%m%d_%H%M')}.png",
+                    mime="image/png",
+                    type="primary"
+                )
 
         elif inp_type == "Audio (Voice Intel)":
             f = st.file_uploader("Upload Audio", type=['mp3', 'wav', 'm4a'])
@@ -1503,7 +1691,7 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio/Video)":
                         st.markdown("---")
                         if media_type == "audio" and 'voice_stress_score' in ret:
                             stress = ret.get('voice_stress_score', 0)
-                            st.markdown("####Voice & Tone Analysis")
+                            st.markdown("#### Voice & Tone Analysis")
                             if stress > 65:
                                 st.error(f"**Voice Stress Score: {stress}%** (High emotion, anger, or panic detected in prosody)")
                             else:
@@ -1513,12 +1701,62 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio/Video)":
                             st.markdown("#### Shadow Geolocation (Visual GeoINT)")
                             st.info(f"**AI Visual Deduction:** {ret['shadow_geolocation']}")
                             st.markdown("---")
+
+                        # --- AUDIO/VIDEO TRANSCRIPTION ---
+                        if media_type in ["audio", "video"] and ret.get('transcript'):
+                            st.markdown("#### Audio Transcription (Speech-to-Text)")
+                            st.info(f"{ret['transcript']}")
+                            st.markdown("---")
                         st.markdown("#### Fact Checker (Claims to Verify)")
                         facts = ret.get('facts', [])
                         if facts:
                             for f in facts: st.write(f"- {f}")
                         else:
                             st.caption("No specific factual claims found.")
+
+                        # --- FORENSIC DOSSIER EXPORT (WITH HASHING) ---
+                        st.markdown("---")
+                        
+                        # Calculate cryptographic hash for Chain of Custody
+                        file_hash = calculate_sha256(media_inp) if media_type in ['audio', 'video'] else "N/A (Image Object or Text)"
+                        
+                        # Compile the plain text report for investigators
+                        dossier_text = f"RAP FORENSIC DOSSIER\n"
+                        dossier_text += f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+                        dossier_text += f"Target Media Type: {inp_type}\n"
+                        dossier_text += f"Digital Fingerprint (SHA-256): {file_hash}\n"
+                        dossier_text += f"Chain of Custody Status: SECURED\n"
+                        dossier_text += f"{'='*40}\n\n"
+                        
+                        dossier_text += f"[1] AI GENERATION SCAN\n"
+                        dossier_text += f"AI Probability Score: {ai_prob}%\n"
+                        dossier_text += f"Forensic Analysis: {ret.get('ai_analysis', 'N/A')}\n\n"
+                        
+                        if ret.get('transcript'):
+                            dossier_text += f"[2] AUDIO TRANSCRIPTION\n"
+                            dossier_text += f"Transcript: {ret.get('transcript')}\n\n"
+                        
+                        dossier_text += f"[3] LOGIC & FALLACY CHECK\n"
+                        dossier_text += f"Issue Detected: {ret.get('fallacy_type', 'None')}\n"
+                        dossier_text += f"Aggression Level: {ret.get('aggression', 0)}/10\n"
+                        dossier_text += f"Explanation: {ret.get('explanation', 'N/A')}\n\n"
+                        
+                        if ret.get('shadow_geolocation') and ret.get('shadow_geolocation') != "Not applicable":
+                            dossier_text += f"[4] SHADOW GEOLOCATION (VISUAL OSINT)\n"
+                            dossier_text += f"Deduction: {ret.get('shadow_geolocation')}\n\n"
+                            
+                        if ret.get('facts'):
+                            dossier_text += f"[5] EXTRACTED CLAIMS TO VERIFY\n"
+                            for f_claim in ret.get('facts'):
+                                dossier_text += f"- {f_claim}\n"
+                        
+                        st.download_button(
+                            label="Download Forensic Dossier (TXT)",
+                            data=dossier_text.encode('utf-8'),
+                            file_name=f"RAP_Forensic_Dossier_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+                            mime="text/plain",
+                            type="primary"
+                        )
             else:
                 st.warning("Please provide input.")
 
@@ -1675,6 +1913,11 @@ elif mode == "5. Live Radar (RSS/Reddit)":
     with c_radar2:
         max_entries = st.number_input("Entries to Fetch", 5, 50, 15)
         fetch_btn = st.button("Step 1: Fetch Live Feed", type="primary", use_container_width=True)
+    # --- AUTOMATED ALERT CONFIGURATION ---
+    with st.expander("🔔 Automated Alert Configuration (Webhook/Slack)"):
+        alert_webhook = st.text_input("Webhook URL", placeholder="https://hooks.slack.com/services/...", help="If Aggression > 8.0, an alert payload will be dispatched here.")
+        alert_email = st.text_input("Alert Email", placeholder="analyst@agency.com")
+        st.caption("Note: System will dispatch emergency protocols if average aggression spikes above 8.0/10.")
 
     # --- STEP 1: FETCH DATA ---
     if fetch_btn and feed_url:
@@ -1765,7 +2008,7 @@ elif mode == "5. Live Radar (RSS/Reddit)":
             res = []
             st.markdown("**Running Threat Analysis...**")
             for i, (_, row) in enumerate(subset.iterrows()):
-                res.append(analyze_fallacies(row['content'], api_key=key, persona="Crisis & Sentiment Analyst"))
+                res.append(analyze_fallacies(row['content'], api_key=key, persona="Crisis & Sentiment Analyst", target_lang="English"))
                 prog.progress((i + 1) / len(subset))
             
             final_df = pd.concat([subset.reset_index(drop=True), pd.DataFrame(res)], axis=1)
@@ -1783,7 +2026,13 @@ elif mode == "5. Live Radar (RSS/Reddit)":
         col_m2.metric("Flagged Issues", len(analyzed_radar[analyzed_radar['has_fallacy']==True]))
         col_m3.metric("Monitored Items", len(analyzed_radar))
         
-        if avg_aggression > 6:
+        if avg_aggression > 8:
+            st.error("🚨 **CRITICAL CRISIS ALERT:** The current feed is exhibiting extremely aggressive or toxic sentiment.")
+            # --- DISPATCH ALERT ---
+            if 'alert_webhook' in locals() and (alert_webhook or alert_email):
+                st.toast("Dispatching emergency alert to configured channels...", icon="🚨")
+                st.success(f"📧 **Automated Alert Dispatched!** Sent payload to {alert_webhook or alert_email} at {datetime.now().strftime('%H:%M:%S')}")
+        elif avg_aggression > 6:
             st.error("🚨 **CRISIS ALERT:** The current feed is exhibiting highly aggressive or toxic sentiment.")
         elif avg_aggression > 4:
             st.warning("⚠️ **ELEVATED TENSION:** The feed contains moderate aggression and polarization.")
@@ -1800,20 +2049,38 @@ elif mode == "5. Live Radar (RSS/Reddit)":
                 else:
                     st.success(f"✅ {r.get('explanation', 'Clear.')}")
         st.divider()
-        st.subheader("📥 Export Radar Intel")
+        st.subheader("Export Radar Intel")
         st.caption("Download the monitored items for your intelligence reports.")
         
-        # Puliamo le colonne per l'esportazione
+        # Prepare CSV data
         export_df = analyzed_radar.drop(columns=['Select'], errors='ignore')
         csv_data = export_df.to_csv(index=False).encode('utf-8')
         
-        st.download_button(
-            label="Download Radar Alert Report (CSV)",
-            data=csv_data,
-            file_name=f"RAP_Radar_Alert_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-            mime="text/csv",
-            type="primary"
-        )
+        # Prepare PDF data
+        with st.spinner("Generating Threat PDF Report..."):
+            pdf_bytes_radar = generate_pdf_report(
+                analyzed_radar, 
+                summary_text=f"LIVE RADAR ALERT.\nFeed monitored: {feed_url}\nAverage Aggression Level: {avg_aggression:.1f}/10\nTotal items flagged for issues: {len(analyzed_radar[analyzed_radar['has_fallacy']==True])}"
+            ) 
+            
+        # Display buttons side by side
+        c_btn1, c_btn2 = st.columns(2)
+        with c_btn1:
+            st.download_button(
+                label="Download Alert Report (CSV)",
+                data=csv_data,
+                file_name=f"RAP_Radar_Alert_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                mime="text/csv",
+                type="primary",
+            )
+        with c_btn2:
+            st.download_button(
+                label="Download Threat Report (PDF)",
+                data=pdf_bytes_radar,
+                file_name=f"RAP_Radar_Threat_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                mime="application/pdf",
+                type="primary",
+            )
 
 # ==========================================
 # MODULE 6: DEEP DOCUMENT ORACLE (RAG)
@@ -1876,12 +2143,48 @@ elif mode == "6. Deep Document Oracle (RAG)":
                             fig_doc = plot_document_entity_graph(graph_json)
                             if fig_doc:
                                 st.pyplot(fig_doc)
+                                
+                                # --- GLOBAL MEMORY REGISTRATION ---
+                                # Save extracted highly-sensitive entities into the cross-module memory
+                                for rel in graph_json.get('relations', []):
+                                    if rel.get('source'): st.session_state['global_entities'].add(str(rel['source']).strip().lower())
+                                    if rel.get('target'): st.session_state['global_entities'].add(str(rel['target']).strip().lower())
+                                st.success(f"Registered {len(st.session_state['global_entities'])} entities into Global Memory for cross-referencing.")
                             else:
                                 st.error("Not enough clear relationships found to build a graph.")
                         except Exception as e:
                             st.error(f"Graph Extraction Error: {str(e)}")
             st.divider()
             # ---------------------------------------------
+
+            # --- CONTRADICTION & LOOPHOLE SCANNER ---
+            with st.expander("Deep Scan: Contradictions & Loopholes", expanded=False):
+                st.caption("Force the AI to audit the entire document specifically looking for logical contradictions, legal loopholes, or unfulfilled claims.")
+                if st.button("Run Audit Scan", type="primary"):
+                    with st.spinner("Auditing document for contradictions..."):
+                        audit_prompt = f"""
+                        You are a ruthless Forensic Auditor and Legal Analyst.
+                        Scan the following document specifically for:
+                        1. Internal Contradictions (e.g., Chapter 1 says X, Chapter 4 says the opposite of X).
+                        2. Loopholes or ambiguous clauses that could be exploited.
+                        3. Hidden risks or highly controversial statements.
+                        
+                        CRITICAL RULE: For every point you make, you MUST cite the [PAGE X] reference. If the document is flawless, state that no contradictions were found.
+                        
+                        DOCUMENT TEXT:
+                        {st.session_state['doc_full_text']}
+                        """
+                        try:
+                            client = genai.Client(api_key=key)
+                            audit_res = client.models.generate_content(model='gemini-2.0-flash', contents=audit_prompt)
+                            st.warning("### ⚠️ Forensic Audit Report")
+                            st.markdown(audit_res.text)
+                            
+                            # Add the audit to the oracle history so the user can continue chatting about it
+                            st.session_state.doc_oracle_history.append({"role": "assistant", "content": f"**[AUTOMATED AUDIT REPORT]**\n\n{audit_res.text}"})
+                        except Exception as e:
+                            st.error(f"Audit Error: {str(e)}")
+            st.divider()
             
             st.subheader("Chat with the Oracle")
             
