@@ -27,6 +27,9 @@ import hashlib
 import plotly.graph_objects as go
 import plotly.express as px
 import urllib.request
+import cv2
+import math
+from PIL import ImageDraw
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -70,6 +73,62 @@ def calculate_sha256(file_bytes):
     """Generates a cryptographic hash for Chain of Custody proof."""
     if not file_bytes: return "N/A"
     return hashlib.sha256(file_bytes).hexdigest()
+
+# --- HELPER: FORENSIC STORYBOARD GENERATOR ---
+def create_video_storyboard(video_bytes, num_frames=12):
+    """Dismembers the video into exactly 12 frames and merges them into a single grid image."""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+        tmp.write(video_bytes)
+        tmp_path = tmp.name
+    
+    cap = cv2.VideoCapture(tmp_path)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    
+    if total_frames == 0: return None
+        
+    interval = max(1, total_frames // num_frames)
+    frames = []
+    
+    for i in range(num_frames):
+        frame_id = i * interval
+        if frame_id >= total_frames: frame_id = total_frames - 1
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_id)
+        ret, frame = cap.read()
+        if ret:
+            # Convert BGR to RGB for PIL
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            pil_img = Image.fromarray(frame_rgb)
+            # Resize to prevent memory explosion
+            pil_img.thumbnail((400, 400)) 
+            timestamp = frame_id / fps if fps > 0 else 0
+            frames.append((pil_img, timestamp))
+            
+    cap.release()
+    os.unlink(tmp_path)
+    
+    if not frames: return None
+        
+    # Create the grid (3 columns)
+    cols = 3
+    rows = math.ceil(len(frames) / cols)
+    w, h = frames[0][0].size
+    padding_y = 40
+    
+    grid_img = Image.new('RGB', (cols * w, rows * (h + padding_y)), color='black')
+    draw = ImageDraw.Draw(grid_img)
+    
+    for i, (img, ts) in enumerate(frames):
+        row = i // cols
+        col = i % cols
+        x = col * w
+        y = row * (h + padding_y)
+        grid_img.paste(img, (x, y + padding_y))
+        # Print the exact timestamp on the frame
+        draw.text((x + 10, y + 10), f"Frame Time: {ts:.2f}s", fill="red")
+        
+    # Return the PIL image object directly instead of raw bytes
+    return grid_img
 
 # --- HELPER: PII SANITIZER (PRIVACY REDACTION) ---
 def sanitize_pii(text):
@@ -578,36 +637,40 @@ def cognitive_rewrite(text, api_key, media_data=None, media_type="image"):
         client = genai.Client(api_key=api_key)
         
         prompt_text = f"""
-        You are a high-level Strategic Intelligence Investigator, OSINT Specialist, and Digital Forensics Expert. You never provide generic or lazy answers.
+        You are a highly paranoid Strategic Intelligence Investigator and a Military-Grade Digital Forensics Expert. You NEVER trust the narrative of a video or image. You ONLY trust physics, pixels, and temporal consistency.
         
         YOUR TASKS:
-        1. AI FORENSICS: Analyze media for AI GENERATION/ENHANCEMENT. Score 0-20 (Natural), 40-70 (Upscaled/Filtered), 70-100 (Deepfake/Generated). 
-           CRITICAL - Look for these specific artifacts depending on the subject:
-           - HUMANS: edge halos, texture loss in skin, unnatural gaze, missing/merged fingers, or "masking" glitches.
-           - ENVIRONMENT & PHYSICS: objects morphing or melting, physically impossible events (e.g., roads/buildings breaking like paper or rubber), gravity violations, floating objects, impossible lighting/shadows, or static backgrounds that should be reacting to a massive foreground event.
-        2. IDENTITY VERIFICATION: Identify any famous people, celebrities, or public figures. Evaluate if their appearance, age, and movements are consistent.
+        1. AI FORENSICS (THE PARANOIA PROTOCOL): Analyze media for AI GENERATION (Sora, Runway, Midjourney, etc.). Score 0-20 (Natural), 40-70 (Manipulated), 70-100 (Fully AI Generated).
+           CRITICAL INSTRUCTION: DO NOT get distracted by what is happening in the scene. Focus strictly on HOW the matter behaves. Look specifically for:
+           - TEMPORAL MORPHING: Do objects, limbs, or faces change volume, shape, or structure from one second to another?
+           - MATTER COMPENETRATION (CLIPPING): Do solid objects pass through each other? (e.g., hands melting into clothing, feet sinking into solid concrete, a person merging with an animal).
+           - KINEMATICS & GRAVITY: Do movements look "floaty", lack real momentum, or defy gravity? Does the center of mass shift impossibly?
+           - BACKGROUND WARPING: Does the background or static environment stretch, drag, or melt when a foreground subject moves past it?
+           - TEXTURE HALLUCINATION: Does text, fur, or fabric boil, shift, or turn into illegible alien symbols as the camera moves?
+           If you detect EVEN ONE of these physics-breaking anomalies, you MUST set the 'ai_generated_probability' score above 85% and detail the exact hallucination.
+           
+        2. IDENTITY VERIFICATION: Identify any famous people. Evaluate if their appearance and movements are physically consistent.
         3. ADVANCED GEO-INT (Shadow Geolocation): 
-           - IF THE MEDIA IS AI-GENERATED (Score > 60): You MUST output exactly "Fictional AI-Generated Environment - Geolocation not applicable." Do not attempt to guess a real location.
-           - IF THE MEDIA IS REAL: Deduce the geographic location by identifying micro-clues (power outlets, street signs, architectural styles, car plates, vegetation). Aim for city or region level.
-        4. SYLLOGISM MACHINE: If text or speech is provided, deconstruct the core argument into formal logical steps. If there is no text/speech, leave empty.
-        5. VIDEO TIMELINE: MANDATORY: If the media is a video, provide at least 5-8 timestamp objects in the 'video_timeline' array. Identify the exact moments where physics hallucinate, objects melt, or AI artifacts appear.
-        6. AGGRESSION: Score the emotional intensity/aggression from 0 to 10 (MANDATORY RANGE: 0-10).
+           - IF THE MEDIA IS AI-GENERATED (Score > 60): Output exactly "Fictional AI-Generated Environment - Geolocation not applicable."
+           - IF THE MEDIA IS REAL: Deduce geographic location by identifying micro-clues (street signs, architectural styles, car plates).
+        4. SYLLOGISM MACHINE: Deconstruct the core argument of the text/speech into formal logical steps.
+        5. VIDEO TIMELINE: MANDATORY IF YOU SEE A STORYBOARD GRID OR A VIDEO: Provide at least 5-8 timestamp objects in the 'video_timeline' array. Read the red timestamp text on the frames (e.g., "0.00s", "2.50s") and use those for the 'timestamp' field. Detail the EXACT physical anomalies or morphing glitches at each frame. Do NOT describe the plot; describe the physical artifacts.
+        6. AGGRESSION: Score emotional intensity from 0 to 10.
         
         CRITICAL LANGUAGE RULE: 
         1. IF 'Input Text/Context' IS PROVIDED: Detect its language and use it for ALL output values.
-        2. IF 'Input Text/Context' IS EMPTY: Check the MEDIA content. If it is English, use ENGLISH. If it is Italian, use ITALIAN. 
-        3. DEFAULT FALLBACK: If unsure, use ENGLISH. Never use German or other languages.
-        4. ABSOLUTE CONSISTENCY: Do not mix languages. If English is detected, every single field (explanation, details, ai_analysis, rewritten_text) MUST be in English.
+        2. IF 'Input Text/Context' IS EMPTY: Check the MEDIA content. If English, use ENGLISH. If Italian, use ITALIAN. Default to English if unsure.
+        3. ABSOLUTE CONSISTENCY: Every single field MUST be in the target language.
         
         JSON OUTPUT RULES (Keep keys in English):
-        - "fallacy_type": Name of the issue/fallacy in the target language.
-        - "explanation": Comprehensive analysis in the target language.
-        - "ai_analysis": Detailed forensic breakdown in the target language.
-        - "syllogism_breakdown": Array of objects with 'step', 'text', 'flaw' in the target language.
-        - "video_timeline": Array of objects with 'timestamp', 'ai_score', 'details'.
+        - "fallacy_type": Name of the issue/fallacy.
+        - "explanation": Comprehensive analysis.
+        - "ai_analysis": Detailed forensic breakdown of physics violations and morphing.
+        - "syllogism_breakdown": Array of objects with 'step', 'text', 'flaw'.
+        - "video_timeline": Array of objects with 'timestamp', 'ai_score', 'details' (focus on glitches, not plot).
         - "shadow_geolocation": String with detailed geographic deduction.
-        - "aggression": Integer (STRICTLY 0 to 10).
-        - "transcript": EXACT word-for-word transcription of spoken audio/video (in the detected language). Leave empty if no speech is detected.
+        - "aggression": Integer (0 to 10).
+        - "transcript": EXACT word-for-word transcription. Leave empty if none.
         
         RESPONSE (Strict JSON):
         {{
@@ -631,9 +694,13 @@ def cognitive_rewrite(text, api_key, media_data=None, media_type="image"):
         contents = [prompt_text]
         if text: contents.append(f"Input Text/Context: {text[:10000]}")
         
-        if media_data:
+        if media_data is not None:
             if media_type == "image":
-                contents.append(media_data) 
+                # Ensure compatibility whether it's raw bytes or a PIL Image
+                if isinstance(media_data, bytes):
+                    contents.append(types.Part.from_bytes(data=media_data, mime_type="image/jpeg"))
+                else:
+                    contents.append(media_data) 
             elif media_type == "audio":
                 contents.append(types.Part.from_bytes(data=media_data, mime_type="audio/mp3"))
             elif media_type == "video":
@@ -1657,11 +1724,23 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio/Video)":
         elif inp_type == "Video (Deepfake Scan)":
             text_inp = st.text_area("Video Context (Optional)", placeholder="What is this video claiming?", height=100)
             
+            # Modify the base prompt to tell it it's looking at a storyboard grid
+            text_inp = "CRITICAL INSTRUCTION: You are looking at a Forensic Storyboard grid of a video, not a single photo. Compare the physical consistency of the matter between the different frames to find AI glitches.\n\n" + str(text_inp)
+
             f = st.file_uploader("Upload Video (Max 50MB)", type=['mp4', 'mov'])
             if f:
-                media_inp = f.read()
-                media_type = "video"
-                st.video(media_inp)
+                raw_video_bytes = f.read()
+                st.video(raw_video_bytes)
+                
+                with st.spinner("Extracting forensic storyboard (Nuclear Option)..."):
+                    storyboard_bytes = create_video_storyboard(raw_video_bytes, num_frames=12)
+                    if storyboard_bytes:
+                        st.success("✅ Forensic storyboard extracted invisibly for the AI.")
+                        # We pass the grid to Gemini making it believe it's a single image!
+                        media_inp = storyboard_bytes
+                        media_type = "image"
+                    else:
+                        st.error("Failed to extract frames.")
             else:
                 st.info("Please upload an MP4 or MOV file to start the forensic analysis.")
             
@@ -1690,7 +1769,7 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio/Video)":
 
                         # --- FORENSIC VIDEO TIMELINE ---
                         v_timeline = ret.get('video_timeline', [])
-                        if media_type == "video" and isinstance(v_timeline, list) and len(v_timeline) > 0:
+                        if inp_type == "Video (Deepfake Scan)" and isinstance(v_timeline, list) and len(v_timeline) > 0:
                             st.markdown("#### Forensic Video Timeline")
                             st.caption("Temporal analysis of AI manipulation probability across the video length.")
                             
@@ -1723,9 +1802,9 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio/Video)":
 
                         # --- FALLACY & LOGIC UI ---
                         if ret.get('has_fallacy'):
-                            st.error(f"🛑 Issue Detected: **{ret['fallacy_type']}**")
+                            st.error(f"🛑 Issue Detected: **{ret.get('fallacy_type', 'System Processing Error')}**")
                             st.metric("Aggression Level", f"{ret.get('aggression', 0)}/10")
-                            st.warning(f"**Analysis:** {ret.get('explanation', 'No details.')}")
+                            st.warning(f"**Analysis:** {ret.get('explanation', 'No details available.')}")
                         else:
                             st.success("✅ Neural Guard: No major issues detected.")
                             st.info(f"**Analysis:** {ret.get('explanation', 'Content is sound.')}")
