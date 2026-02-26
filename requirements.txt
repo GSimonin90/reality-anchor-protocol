@@ -16,3 +16,4 @@ Pillow
 feedparser
 networkx
 plotly
+opencv-python-headless
