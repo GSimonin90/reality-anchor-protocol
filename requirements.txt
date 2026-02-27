@@ -17,3 +17,4 @@ feedparser
 networkx
 plotly
 opencv-python-headless
+requests
