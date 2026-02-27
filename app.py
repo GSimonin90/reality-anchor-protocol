@@ -29,7 +29,10 @@ import plotly.express as px
 import urllib.request
 import cv2
 import math
-from PIL import ImageDraw
+from PIL import ImageDraw, ImageChops, ImageEnhance
+import urllib.parse
+from cv2 import GaussianBlur
+import requests
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -68,6 +71,130 @@ def get_cost_estimate():
     total_tokens = st.session_state['token_usage']
     cost = (total_tokens / 1_000_000) * 0.20 
     return total_tokens, cost
+
+# --- HELPER: ERROR LEVEL ANALYSIS (ELA) ---
+def perform_ela(image, quality=90):
+    """Calculates the Error Level Analysis of an image to detect Photoshop manipulations."""
+    try:
+        # Ensure the image is in RGB mode
+        original = image.convert('RGB')
+        
+        # Temporarily resave the image at a lower quality
+        buffer = io.BytesIO()
+        original.save(buffer, 'JPEG', quality=quality)
+        buffer.seek(0)
+        resaved = Image.open(buffer)
+        
+        # Calculate the absolute difference between the original and the compressed image
+        ela_image = ImageChops.difference(original, resaved)
+        
+        # Visually amplify the difference to make it visible to the human eye
+        extrema = ela_image.getextrema()
+        max_diff = max([ex[1] for ex in extrema])
+        if max_diff == 0: max_diff = 1
+        scale = 255.0 / max_diff
+        ela_image = ImageEnhance.Brightness(ela_image).enhance(scale)
+        
+        return ela_image
+    except Exception as e:
+        return None
+
+# --- HELPER: OPSEC FACE ANONYMIZATION (ULTIMATE BERSERKER CALIBRATION) ---
+def anonymize_faces(image):
+    """
+    Executes a dual sweep with maximum exhaustive search (scaleFactor=1.05).
+    Uses a highly precise NMS (Non-Maximum Suppression) style logic to filter overlaps
+    without deleting faces of people standing close to each other.
+    """
+    try:
+        # 1. Convert PIL Image to OpenCV format
+        img_cv = np.array(image.convert('RGB'))
+        img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGB2BGR)
+        gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+        
+        # 2. Load BOTH models
+        frontal_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        profile_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_profileface.xml')
+        
+        # 3. SWEEP 1: Frontal Scan (Aggressive search 1.05, but minNeighbors=4 blocks background noise)
+        frontal_faces = frontal_cascade.detectMultiScale(
+            gray, scaleFactor=1.05, minNeighbors=4, minSize=(20, 20)
+        )
+        
+        # 4. SWEEP 2: Profile Scan
+        profile_faces = profile_cascade.detectMultiScale(
+            gray, scaleFactor=1.05, minNeighbors=4, minSize=(20, 20)
+        )
+        
+        # Convert tuples to lists
+        f_faces = list(frontal_faces) if len(frontal_faces) > 0 else []
+        p_faces = list(profile_faces) if len(profile_faces) > 0 else []
+        all_faces = f_faces + p_faces
+        
+        # 5. SURGICAL ANTI-OVERLAP PROTOCOL
+        final_faces = []
+        for (x, y, w, h) in all_faces:
+            overlap = False
+            for (fx, fy, fw, fh) in final_faces:
+                cx, cy = x + w/2, y + h/2
+                fcx, fcy = fx + fw/2, fy + fh/2
+                dist = ((cx - fcx)**2 + (cy - fcy)**2)**0.5
+                
+                # ONLY discard if the centers are EXTREMELY close (less than half the face width)
+                # This prevents deleting two different people standing shoulder-to-shoulder
+                if dist < (min(w, fw) * 0.4):
+                    overlap = True
+                    break
+            
+            if not overlap:
+                final_faces.append((x, y, w, h))
+        
+        # 6. Apply Dynamic Heavy Blur
+        for (x, y, w, h) in final_faces:
+            face_roi = img_cv[y:y+h, x:x+w]
+            
+            # Calculate blur intensity
+            k_size = (w // 2) | 1 
+            if k_size < 3: k_size = 3
+            
+            # Sigma=50 guarantees a very dense, completely opaque blur
+            blurred_face = cv2.GaussianBlur(face_roi, (k_size, k_size), 50)
+            img_cv[y:y+h, x:x+w] = blurred_face
+            
+        # 7. Return the final image
+        img_final = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
+        return Image.fromarray(img_final), len(final_faces)
+        
+    except Exception as e:
+        return image, 0
+    
+# --- HELPER: EXIF GPS SNIPER ---
+def get_decimal_from_dms(dms, ref):
+    """Converts Degrees, Minutes, Seconds to Decimal Coordinates."""
+    degrees, minutes, seconds = dms[0], dms[1], dms[2]
+    dec = float(degrees) + float(minutes)/60 + float(seconds)/3600
+    if ref in ['S', 'W']: dec = -dec
+    return dec
+
+def get_exif_location(image):
+    """Extracts hidden GPS coordinates from an image's EXIF data."""
+    try:
+        exif = image._getexif()
+        if not exif: return None
+        geotagging = {}
+        for (idx, tag) in TAGS.items():
+            if tag == 'GPSInfo' and idx in exif:
+                for (key, val) in GPSTAGS.items():
+                    if key in exif[idx]:
+                        geotagging[val] = exif[idx][key]
+        
+        if 'GPSLatitude' in geotagging and 'GPSLongitude' in geotagging:
+            lat = get_decimal_from_dms(geotagging['GPSLatitude'], geotagging.get('GPSLatitudeRef', 'N'))
+            lon = get_decimal_from_dms(geotagging['GPSLongitude'], geotagging.get('GPSLongitudeRef', 'E'))
+            return lat, lon
+    except:
+        pass
+    return None
 
 # --- HELPER: DIGITAL FORENSICS HASHING ---
 def calculate_sha256(file_bytes):
@@ -555,14 +682,38 @@ def scrape_reddit_native(subreddit, limit=50):
     except Exception as e:
         return None
 
+# --- HELPER: RAW PASTE PARSER ---
 def parse_raw_paste(raw_text):
-    lines = raw_text.split('\n')
-    cleaned_data = []
-    for line in lines:
-        line = line.strip()
-        if not line or len(line) < 5: continue
-        cleaned_data.append({'agent_id': 'Paste_Source', 'timestamp': 'Unknown', 'content': line, 'likes': 0})
-    return pd.DataFrame(cleaned_data)
+    """
+    Parses pasted text. Cuts strictly at the FIRST comma if the header is present,
+    preventing commas inside the comments from breaking the data structure.
+    """
+    lines = [line.strip() for line in raw_text.strip().split('\n') if line.strip()]
+    data = []
+    now = datetime.now()
+    
+    has_header = False
+    if lines and lines[0].lower().replace(" ", "") == "agent_id,content":
+        has_header = True
+        lines = lines[1:]
+        
+    for i, line in enumerate(lines):
+        if has_header and ',' in line:
+            parts = line.split(',', 1)
+            agent = parts[0].strip()
+            content = parts[1].strip()
+        else:
+            agent = "Paste_Source"
+            content = line
+            
+        data.append({
+            "agent_id": agent,
+            "timestamp": (now - timedelta(minutes=i*10)).strftime("%Y-%m-%d %H:%M:%S"),
+            "content": content,
+            "likes": 0
+        })
+        
+    return pd.DataFrame(data)
 
 def normalize_dataframe(df):
     target_cols = {
@@ -622,7 +773,7 @@ def analyze_fallacies_cached(text, api_key, context_info="", persona="Logic & Fa
             is_long = len(text) > 2000
             common_instructions = f"""
             You are a {persona}. CONTEXT: "{context_info}"
-            CRITICAL MULTILINGUAL RULE: The input text might be in any language (Russian, Arabic, slang, etc.). 
+            CRITICAL MULTILINGUAL RULE: The input text might be in any language. 
             You MUST conduct the analysis and write ALL your JSON responses exclusively in {target_lang}.
             TASKS:
             - explanation: Brief Analysis in {target_lang}.
@@ -631,9 +782,10 @@ def analyze_fallacies_cached(text, api_key, context_info="", persona="Logic & Fa
             - target: Target Entity.
             - primary_emotion: [Anger, Fear, Disgust, Sadness, Joy, Surprise, Neutral] in {target_lang}.
             - archetype: [Instigator, Loyalist, Troll, Rational Skeptic, Observer] in {target_lang}.
-            RULES: Opinions/Sarcasm -> 'has_fallacy': false.
+            - propaganda_tactic: Identify Military Info-War Tactics (e.g., Firehose of Falsehood, Astroturfing, Dead Cat, Whataboutism) if present.
+            RULES: Opinions/Sarcasm -> 'has_fallacy': false. You MUST still find standard logical fallacies in 'fallacy_type'.
             RESPONSE (Strict JSON):
-            {{ "has_fallacy": bool, "fallacy_type": "Name", "explanation": "Text", "correction": "Text", "main_topic": "Text", "micro_topic": "Text", "target": "Text", "primary_emotion": "Text", "archetype": "Text", "relevance": "Text", "counter_reply": "Text", "sentiment": "Text", "aggression": 0-10 }}
+            {{ "has_fallacy": bool, "fallacy_type": "Name", "propaganda_tactic": "Name", "explanation": "Text", "correction": "Text", "main_topic": "Text", "micro_topic": "Text", "target": "Text", "primary_emotion": "Text", "archetype": "Text", "relevance": "Text", "counter_reply": "Text", "sentiment": "Text", "aggression": 0, "sophistication": 0, "hostile_intent": 0 }}
             """
             if is_long: prompt = f"Analyze LONG.\n{common_instructions}\nText: \"{text[:15000]}...\""
             else: prompt = f"Analyze Text.\n{common_instructions}\nText: \"{text}\""
@@ -907,6 +1059,29 @@ if st.sidebar.button("Clear Workspace", type="secondary", help="Erase all curren
             del st.session_state[key]
     # Force a page reload to apply changes
     st.rerun()
+
+# --- OSINT ARSENAL (SIDEBAR) ---
+st.sidebar.markdown("---")
+with st.sidebar.expander("OSINT Arsenal (Target Intel)", expanded=False):
+    st.markdown("Generate tactical search vectors for any target entity.")
+    osint_target = st.text_input("Enter Target Entity (Name/Company/IP):", placeholder="e.g. John Doe, CyberCorp")
+    
+    if osint_target:
+        safe_t = urllib.parse.quote(osint_target)
+        
+        st.markdown("**Google Dorks (Deep Web)**")
+        st.markdown(f"- [Find Leaked PDF/DOCX](https://www.google.com/search?q=ext:pdf+OR+ext:docx+%22{safe_t}%22+%22confidential%22+OR+%22internal%22)")
+        st.markdown(f"- [Find Open Directories](https://www.google.com/search?q=intitle:%22index+of%22+%22{safe_t}%22)")
+        st.markdown(f"- [Find Pastebin Leaks](https://www.google.com/search?q=site:pastebin.com+%22{safe_t}%22)")
+        st.markdown(f"- [LinkedIn Employee Search](https://www.google.com/search?q=site:linkedin.com/in+%22{safe_t}%22)")
+        
+        st.markdown("**Infrastructure & Ports**")
+        st.markdown(f"- [Shodan (IoT & Servers)](https://www.shodan.io/search?query={safe_t})")
+        st.markdown(f"- [Censys (Certificates)](https://search.censys.io/search?resource=hosts&q={safe_t})")
+        
+        st.markdown("**Social Intelligence**")
+        st.markdown(f"- [Twitter/X Advanced Search](https://twitter.com/search?q=%22{safe_t}%22&src=typed_query)")
+        st.markdown(f"- [Reddit Mention Tracker](https://www.reddit.com/search/?q=%22{safe_t}%22)")
 
 st.sidebar.markdown("---")
 
@@ -1411,6 +1586,28 @@ elif mode == "2. Social Data Analysis (Universal)":
                                 x='Count', y=alt.Y('Archetype', sort='-x'), color=alt.Color('Archetype', scale=alt.Scale(scheme='dark2'), legend=None)
                             ).properties(height=300)
                             st.altair_chart(chart_arch, use_container_width=True)
+
+                    st.markdown("---")
+                    st.caption("Propaganda Warfare Matrix")
+                    if 'sophistication' in adf.columns and 'hostile_intent' in adf.columns:
+                        # Clean data for plotting
+                        mat_df = adf[['agent_id', 'sophistication', 'hostile_intent', 'propaganda_tactic', 'content']].copy()
+                        mat_df['sophistication'] = pd.to_numeric(mat_df['sophistication'], errors='coerce').fillna(0)
+                        mat_df['hostile_intent'] = pd.to_numeric(mat_df['hostile_intent'], errors='coerce').fillna(0)
+                        
+                        chart_matrix = alt.Chart(mat_df).mark_circle(size=80, opacity=0.7).encode(
+                            x=alt.X('sophistication:Q', title='Sophistication (Complexity)', scale=alt.Scale(domain=[0, 10])),
+                            y=alt.Y('hostile_intent:Q', title='Hostile Intent (Malice)', scale=alt.Scale(domain=[0, 10])),
+                            color=alt.Color('propaganda_tactic:N', title='Tactic', scale=alt.Scale(scheme='category10')),
+                            tooltip=['agent_id', 'propaganda_tactic', 'sophistication', 'hostile_intent', 'content']
+                        ).interactive().properties(height=400)
+                        
+                        xrule = alt.Chart(pd.DataFrame({'x': [5]})).mark_rule(color='gray', strokeDash=[3,3]).encode(x='x')
+                        yrule = alt.Chart(pd.DataFrame({'y': [5]})).mark_rule(color='gray', strokeDash=[3,3]).encode(y='y')
+                        
+                        st.altair_chart(chart_matrix + xrule + yrule, use_container_width=True)
+                        st.info("Top-Right Quadrant (High Sophistication + High Hostility) contains the most dangerous Information Warfare operators.")
+
                 with st.expander("Target-Narrative Network Graph", expanded=False):
                     net_fig = plot_network_graph(adf)
                     if net_fig:
@@ -1455,6 +1652,88 @@ elif mode == "2. Social Data Analysis (Universal)":
                 else:
                     st.caption("Insufficient data to calculate High-Value Targets (missing likes or aggression metrics).")
                 
+                # --- SOCKPUPPET DETECTOR (STYLOMETRY) ---
+                st.markdown("---")
+                st.subheader("🎭 Sockpuppet & Troll Farm Detector")
+                st.caption("Stylometric analysis: Identifies different Agent IDs that exhibit the exact same writing style, grammar flaws, and punctuation tics (indicating a single operator managing multiple fake accounts).")
+                
+                if st.button("Run Stylometric AI Scan", type="primary"):
+                    with st.spinner("Analyzing linguistic patterns and neuro-linguistic tics across users..."):
+                        # Group comments by user
+                        user_comments = adf.groupby('agent_id')['content'].apply(lambda x: " | ".join(x)).reset_index()
+                        
+                        if len(user_comments) > 1:
+                            # Take a maximum of 15 users to prevent token explosion
+                            sample_users = user_comments.head(15).to_string(index=False)
+                            
+                            sockpuppet_prompt = f"""
+                            You are an elite Stylometric and Linguistic Forensics AI.
+                            Analyze the following database of users and their comments.
+                            
+                            TASK: Identify "Sockpuppets" (Troll Farm activity). Find instances where 2 or more DIFFERENT 'agent_id' show the EXACT same distinct writing style, neuro-linguistic tics, repetitive punctuation, or grammatical errors.
+                            
+                            DATA:
+                            {sample_users}
+                            
+                            CRITICAL RULE: Write your final report in the SAME LANGUAGE as the comments provided.
+                            If no sockpuppets are found, state that the linguistic variance is natural. If you find suspects, name the 'agent_id' pairs and explain the linguistic tics that link them.
+                            """
+                            try:
+                                client = genai.Client(api_key=key)
+                                sock_res = client.models.generate_content(model='gemini-2.5-flash', contents=sockpuppet_prompt)
+                                st.warning("### Stylometric Audit Report")
+                                st.markdown(sock_res.text)
+                            except Exception as e:
+                                st.error(f"Stylometric Scan Error: {str(e)}")
+                        else:
+                            st.info("Not enough unique users to run a stylometric comparison.")
+
+                # --- DARK TRIAD PSYCHOLOGICAL PROFILING ---
+                st.markdown("---")
+                st.subheader("Dark Triad Profiling")
+                st.caption("Analyzes the text of a specific agent to detect Narcissism, Machiavellianism, and Psychopathy.")
+                
+                # Dropdown to select the target
+                target_agent = st.selectbox("Select Target for Psych-Profile:", adf['agent_id'].unique())
+                
+                if st.button("Run Psychological Profile", type="primary"):
+                    with st.spinner(f"Psychoanalyzing {target_agent}..."):
+                        # Gather all comments from this user
+                        target_comments = " | ".join(adf[adf['agent_id'] == target_agent]['content'].tolist())
+                        
+                        dt_prompt = f"""
+                        You are an elite Psychological Profiler.
+                        Analyze the psychological profile of the author based on these texts:
+                        "{target_comments}"
+                        
+                        Evaluate the Dark Triad traits from 0 to 100.
+                        CRITICAL RULE: Return ONLY a JSON in this exact format:
+                        {{
+                            "narcissism": 50,
+                            "machiavellianism": 50,
+                            "psychopathy": 50,
+                            "analysis": "Short clinical explanation of the profile."
+                        }}
+                        """
+                        try:
+                            client = genai.Client(api_key=key)
+                            dt_res = client.models.generate_content(model='gemini-2.5-flash', contents=dt_prompt)
+                            dt_json = extract_json(dt_res.text)
+                            
+                            if dt_json:
+                                st.write(f"**Clinical Analysis:** {dt_json.get('analysis', 'N/A')}")
+                                
+                                # Plot the Radar Chart
+                                df_dt = pd.DataFrame(dict(
+                                    r=[dt_json.get('narcissism', 0), dt_json.get('machiavellianism', 0), dt_json.get('psychopathy', 0)],
+                                    theta=['Narcissism', 'Machiavellianism', 'Psychopathy']
+                                ))
+                                fig_dt = px.line_polar(df_dt, r='r', theta='theta', line_close=True, range_r=[0,100], title=f"Dark Triad Signature: {target_agent}")
+                                fig_dt.update_traces(fill='toself', line_color='red')
+                                st.plotly_chart(fig_dt, use_container_width=True)
+                        except Exception as e:
+                            st.error(f"Profiling Error: {e}")
+
                 # --- CROSS-ENTITY RESOLUTION (GLOBAL MEMORY CHECK) ---
                 st.markdown("---")
                 st.subheader("Cross-Entity Resolution (Global Memory Check)")
@@ -1576,7 +1855,6 @@ elif mode == "2. Social Data Analysis (Universal)":
                         c1, c2 = st.columns([0.05, 0.95])
                         status = "🟢"
                         if r['has_fallacy']: status = "🔴"
-                        if r.get('is_bot'): status = "🤖"
                         c1.write(status)
                         bot_msg = f" | ⚠️ BOT SUSPECT: {r.get('bot_reason')}" if r.get('is_bot') else ""
                         emotion_tag = f" | {r.get('primary_emotion', '')}" if r.get('primary_emotion') else ""
@@ -1650,9 +1928,22 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio/Video)":
             f = st.file_uploader("Upload Image", type=['png', 'jpg', 'jpeg'])
             text_inp = st.text_area("Image Context / Post Text (Optional)", placeholder="E.g., Paste the Facebook/X post text that accompanied this photo...", height=100)
             if f:
-                media_inp = Image.open(f)
+                original_img = Image.open(f)
+
+                # --- OPSEC: BIOMETRIC ANONYMIZATION ---
+                censor_faces = st.checkbox("Apply OPSEC Face Censor (Auto-Anonymize)", value=False, help="Automatically detects and redacts human faces before analysis to protect identities.")
+                
+                if censor_faces:
+                    media_inp, face_count = anonymize_faces(original_img)
+                    if face_count > 0:
+                        st.success(f"Classified: {face_count} identities redacted.")
+                    else:
+                        st.caption("No faces detected by the algorithm.")
+                else:
+                    media_inp = original_img
+
                 media_type = "image"
-                st.image(media_inp, caption="Uploaded Image", use_container_width=True)
+                st.image(media_inp, caption="Evidence Image", use_container_width=True)
                 
                 # --- EXIF OSINT EXTRACTION & GPS GEOLOCATION ---
                 gps_coords = None
@@ -1734,6 +2025,17 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio/Video)":
                     mime="image/png",
                     type="primary"
                 )
+
+                # --- ELA FORENSICS VISUALIZER ---
+                st.markdown("#### Error Level Analysis (ELA)")
+                st.caption("Detects digital manipulation (Photoshop/copy-paste). Artificially inserted elements will glow significantly brighter or have a completely different texture/color in the ELA map compared to the rest of the image.")
+                
+                with st.spinner("Generating ELA Map..."):
+                    ela_img = perform_ela(media_inp)
+                    if ela_img:
+                        st.image(ela_img, caption="ELA Heatmap (Look for glowing/inconsistent edges)", use_container_width=True)
+                    else:
+                        st.warning("Could not generate ELA for this image format.")
 
         elif inp_type == "Audio (Voice Intel)":
             f = st.file_uploader("Upload Audio", type=['mp3', 'wav', 'm4a'])
@@ -2427,9 +2729,9 @@ elif mode == "5. Live Radar (RSS/Reddit)":
         if avg_aggression >= soglia:
             st.error(f"🚨 **CRITICAL CRISIS ALERT:** The current feed has exceeded the aggression threshold ({avg_aggression:.1f} >= {soglia}).")
             # --- DISPATCH ALERT ---
-            if 'alert_webhook' in locals() and (alert_webhook or alert_email):
+            if 'alert_webhook' in locals() and alert_webhook:
                 st.toast("Dispatching emergency alert to configured channels...", icon="🚨")
-                st.success(f"📧 **Automated Alert Dispatched!** Sent payload to {alert_webhook or alert_email} at {datetime.now().strftime('%H:%M:%S')}")
+                st.success(f"📧 **Automated Alert Dispatched!** Sent payload to {alert_webhook} at {datetime.now().strftime('%H:%M:%S')}")
         elif avg_aggression >= (soglia - 2.0):
             st.warning(f"⚠️ **ELEVATED TENSION:** The feed is showing signs of polarization and is approaching the alert threshold.")
         # --- GEO-INT CHOROPLETH MAP ---
@@ -2782,6 +3084,117 @@ elif mode == "6. Deep Document Oracle (RAG)":
                         st.session_state.doc_oracle_history.append({"role": "assistant", "content": f"**[WAR ROOM DEBATE: {debate_topic}]**\n\n**🔴 RED:** {red_res}\n\n**🔵 BLUE:** {blue_res}\n\n**⚖️ JUDGE:** {judge_res}"})
             st.divider()
             
+            # --- CHRONO-INTELLIGENCE (TIMELINE EXTRACTION) ---
+            with st.expander("Chrono-Intelligence (Event Timeline)", expanded=False):
+                st.caption("Extract every date, deadline, and historical event mentioned in the document and plot them chronologically.")
+                if st.button("Generate Timeline", type="primary"):
+                    with st.spinner("Extracting chronological data..."):
+                        timeline_prompt = f"""
+                        You are a Chronological Intelligence AI. 
+                        Read the document and extract every significant event that has a clear Date or Year associated with it.
+                        
+                        CRITICAL RULE: Return ONLY a JSON in this exact format:
+                        {{ "events": [ {{"date": "YYYY-MM-DD" (or just YYYY), "event": "Short description of what happened"}} ] }}
+                        
+                        DOCUMENT TEXT:
+                        {st.session_state['doc_full_text'][:30000]}
+                        """
+                        try:
+                            client = genai.Client(api_key=key)
+                            time_res = client.models.generate_content(model='gemini-2.0-flash', contents=timeline_prompt)
+                            time_json = extract_json(time_res.text)
+                            
+                            if time_json and 'events' in time_json and len(time_json['events']) > 0:
+                                t_df = pd.DataFrame(time_json['events'])
+                                # Attempt to parse dates for plotting
+                                t_df['ParsedDate'] = pd.to_datetime(t_df['date'], errors='coerce')
+                                t_df = t_df.dropna(subset=['ParsedDate']).sort_values('ParsedDate')
+                                
+                                if not t_df.empty:
+                                    # Create a beautiful Plotly Timeline
+                                    fig_time = px.scatter(
+                                        t_df, x="ParsedDate", y=[1]*len(t_df), text="event",
+                                        title="Document Chronological Timeline",
+                                        labels={"ParsedDate": "Timeline", "y": ""},
+                                        height=300
+                                    )
+                                    fig_time.update_traces(
+                                        mode="markers+text", 
+                                        textposition="top center",
+                                        marker=dict(size=12, color="red")
+                                    )
+                                    fig_time.update_yaxes(showticklabels=False, showgrid=False, zeroline=True, zerolinecolor="gray")
+                                    st.plotly_chart(fig_time, use_container_width=True)
+                                    
+                                    # Show table
+                                    st.dataframe(t_df[['date', 'event']], hide_index=True, use_container_width=True)
+                                    
+                                    st.session_state.doc_oracle_history.append({"role": "assistant", "content": f"**[TIMELINE EXTRACTED]**\nFound {len(t_df)} chronological events."})
+                                else:
+                                    st.error("Could not parse valid dates from the document.")
+                            else:
+                                st.warning("No clear chronological events found in the text.")
+                        except Exception as e:
+                            st.error(f"Timeline Extraction Error: {str(e)}")
+            st.divider()
+
+            # --- PROJECT SPIDERWEB (KNOWLEDGE GRAPH) ---
+            with st.expander("Project Spiderweb (Entity Network)", expanded=False):
+                st.caption("Maps the hidden connections (financial, political, social) between entities in the document.")
+                if st.button("Generate Spiderweb Graph", type="primary"):
+                    with st.spinner("Extracting entities and calculating network topology..."):
+                        net_prompt = f"""
+                        Extract the main entities (People, Companies, Countries, Organizations) and how they are connected.
+                        Limit to the top 15 most critical relationships to keep the graph readable.
+                        
+                        CRITICAL RULE: Return ONLY a JSON in this exact format:
+                        {{"edges": [{{"source": "Entity 1", "target": "Entity 2", "label": "e.g., funded, opposes, controls"}}]}}
+                        
+                        DOCUMENT TEXT:
+                        {st.session_state['doc_full_text'][:20000]}
+                        """
+                        try:
+                            client = genai.Client(api_key=key)
+                            net_res = client.models.generate_content(model='gemini-2.5-flash', contents=net_prompt)
+                            net_json = extract_json(net_res.text)
+                            
+                            if net_json and 'edges' in net_json and len(net_json['edges']) > 0:
+                                # Build the Graph using NetworkX
+                                G = nx.DiGraph()
+                                for edge in net_json['edges']:
+                                    G.add_edge(edge['source'], edge['target'], label=edge['label'])
+                                
+                                # Calculate positions for the nodes
+                                pos = nx.spring_layout(G, seed=42)
+                                
+                                # Create edges for Plotly
+                                edge_x, edge_y, edge_text = [], [], []
+                                for edge in G.edges(data=True):
+                                    x0, y0 = pos[edge[0]]
+                                    x1, y1 = pos[edge[1]]
+                                    edge_x.extend([x0, x1, None])
+                                    edge_y.extend([y0, y1, None])
+                                    edge_text.append(edge[2]['label'])
+                                
+                                # Create nodes for Plotly
+                                node_x = [pos[node][0] for node in G.nodes()]
+                                node_y = [pos[node][1] for node in G.nodes()]
+                                
+                                # Draw the Plotly Figure
+                                fig_net = go.Figure()
+                                # Add lines (Edges)
+                                fig_net.add_trace(go.Scatter(x=edge_x, y=edge_y, line=dict(width=1.5, color='#888'), hoverinfo='none', mode='lines'))
+                                # Add dots (Nodes)
+                                fig_net.add_trace(go.Scatter(x=node_x, y=node_y, mode='markers+text', text=list(G.nodes()), textposition="top center", marker=dict(size=25, color='cyan', line=dict(width=2, color='DarkSlateGrey')), hoverinfo='text'))
+                                
+                                fig_net.update_layout(title="Entity Relationship Network", showlegend=False, xaxis=dict(showgrid=False, zeroline=False, showticklabels=False), yaxis=dict(showgrid=False, zeroline=False, showticklabels=False), height=500)
+                                st.plotly_chart(fig_net, use_container_width=True)
+                            else:
+                                st.warning("Not enough relationships found to build a network.")
+                        except Exception as e:
+                            st.error(f"Spiderweb Generation Error: {e}")
+            st.divider()
+
             st.subheader("Chat with the Oracle")
             
             for message in st.session_state.doc_oracle_history:
