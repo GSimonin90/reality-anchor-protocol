@@ -33,6 +33,7 @@ from PIL import ImageDraw, ImageChops, ImageEnhance
 import urllib.parse
 from cv2 import GaussianBlur
 import requests
+import sqlite3
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -60,6 +61,33 @@ if 'data_store' not in st.session_state:
         'Arena': {'df_a': None, 'df_b': None, 'analyzed_a': None, 'analyzed_b': None},
         'Radar': {'df': None, 'analyzed': None}
     }
+
+# --- HELPER: PANOPTICON (PERSISTENT MEMORY) ---
+def init_panopticon():
+    conn = sqlite3.connect('rap_panopticon.db', check_same_thread=False)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS targets (agent_id TEXT PRIMARY KEY, risk_score REAL, threat_type TEXT, last_seen TEXT)''')
+    conn.commit()
+    return conn
+
+panopticon_db = init_panopticon()
+
+def save_to_panopticon(agent_id, risk_score, threat_type):
+    try:
+        c = panopticon_db.cursor()
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        c.execute('''INSERT INTO targets (agent_id, risk_score, threat_type, last_seen) VALUES (?, ?, ?, ?)
+                     ON CONFLICT(agent_id) DO UPDATE SET risk_score=max(risk_score, ?), last_seen=?''',
+                  (str(agent_id), float(risk_score), str(threat_type), now, float(risk_score), now))
+        panopticon_db.commit()
+    except Exception as e: pass
+
+def check_panopticon(agent_id):
+    try:
+        c = panopticon_db.cursor()
+        c.execute('''SELECT risk_score, threat_type, last_seen FROM targets WHERE agent_id=?''', (str(agent_id),))
+        return c.fetchone()
+    except: return None
 
 def increment_counter(input_text_len=0, output_text_len=0):
     st.session_state['api_calls'] += 1
@@ -391,26 +419,34 @@ def detect_bot_activity(df):
 # --- HELPER: TREND PROJECTION ---
 @st.cache_data
 def project_trend(df, days_ahead=7):
-    if 'timestamp' not in df.columns: return None, False
+    if 'timestamp' not in df.columns: return None, False, None
     df_trend = df.copy()
     df_trend['timestamp'] = pd.to_datetime(df_trend['timestamp'], errors='coerce')
     df_trend = df_trend.dropna(subset=['timestamp']).sort_values('timestamp')
-    if len(df_trend) < 5: return None, False 
+    if len(df_trend) < 5: return None, False, None
+    
     start_date = df_trend['timestamp'].min()
-    df_trend['days_since_start'] = (df_trend['timestamp'] - start_date).dt.days
+    df_trend['days_since_start'] = (df_trend['timestamp'] - start_date).dt.total_seconds() / 86400
     x = df_trend['days_since_start'].values
     y = df_trend['aggression'].values
-    if len(np.unique(x)) < 2: return None, False 
+    if len(np.unique(x)) < 2: return None, False, None
+    
     slope, intercept = np.polyfit(x, y, 1)
     last_day = x.max()
     future_days = np.arange(last_day + 1, last_day + days_ahead + 1).astype(int)
     forecast_y = slope * future_days + intercept
-    future_dates = [start_date + timedelta(days=int(d)) for d in future_days]
+    future_dates = [start_date + timedelta(days=float(d)) for d in future_days]
+    
     past_df = pd.DataFrame({'Date': df_trend['timestamp'], 'Aggression': y, 'Type': 'Historical'})
     future_df = pd.DataFrame({'Date': future_dates, 'Aggression': forecast_y, 'Type': 'Forecast'})
     combined = pd.concat([past_df, future_df])
-    is_escalating = slope > 0.05 
-    return combined, is_escalating
+    
+    days_to_critical = None
+    if slope > 0.05:
+        days_to_critical = (9.0 - intercept) / slope - last_day
+        if days_to_critical < 0: days_to_critical = 0
+        
+    return combined, (slope > 0.05), days_to_critical
 
 # --- HELPER: STRATEGIC SUMMARY ---
 def generate_strategic_summary(df, api_key, context="", persona="Intelligence Analyst"):
@@ -677,6 +713,73 @@ def scrape_reddit_native(subreddit, limit=50):
         if not posts: return None
         return pd.DataFrame(posts)
     except Exception as e:
+        return None
+    
+# --- NATIVE TELEGRAM OSINT SCRAPER (CHAMELEON PROTOCOL) ---
+@st.cache_data(show_spinner=False)
+def scrape_telegram_live(channel_url, limit=30):
+    try:
+        # Extreme URL sanitization (stripping parameters and paths)
+        channel = channel_url.replace('https://', '').replace('http://', '').replace('t.me/', '').replace('@', '').replace('s/', '').strip('/')
+        channel = channel.split('/')[0].split('?')[0]
+        url = f"https://t.me/s/{channel}" # Target the public web preview
+        
+        # Advanced cloaking as a modern browser
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9'
+        }
+        
+        # Attack via Requests
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            st.error(f"Telegram blocked access. HTTP Error: {response.status_code}")
+            return None
+            
+        html = response.text
+        
+        # V3: Bulletproof parsing using string splits instead of greedy regex
+        # This prevents nested <div> tags (links, bold text) from breaking the extraction
+        chunks = re.split(r'<div class="tgme_widget_message_text[^>]*>', html)
+        
+        if len(chunks) <= 1:
+            st.warning("Connection successful, but no text blocks found. Channel may be empty or strictly media-only.")
+            return None
+
+        data = []
+        now = datetime.now()
+        
+        # Extract the actual text blocks
+        msgs = []
+        for chunk in chunks[1:]:
+            # Cut the chunk exactly before the footer or the info section starts
+            text_block = re.split(r'<div class="tgme_widget_message_info"|<div class="tgme_widget_message_footer"', chunk)[0]
+            msgs.append(text_block)
+        
+        for i, m in enumerate(msgs[-limit:]):
+            # Replace <br> tags with actual line breaks
+            clean_text = re.sub(r'<br\s*/?>', '\n', m)
+            # Strip all remaining HTML tags
+            clean_text = re.sub(r'<[^>]+>', ' ', clean_text).strip()
+            # Clean up multiple whitespaces
+            clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+            
+            if len(clean_text) > 5:
+                data.append({
+                    'agent_id': f"TG_{channel}",
+                    'timestamp': (now - timedelta(minutes=len(msgs)-i)).strftime("%Y-%m-%d %H:%M:%S"),
+                    'content': clean_text,
+                    'likes': 0
+                })
+        
+        if not data:
+            st.warning("Messages found, but they were empty after stripping HTML formatting.")
+            return None
+            
+        return pd.DataFrame(data)
+    except Exception as e: 
+        st.error(f"Scraper Error: {str(e)}")
         return None
 
 # --- HELPER: RAW PASTE PARSER ---
@@ -1265,29 +1368,35 @@ if mode == "1. Wargame Room (Simulation)":
 # ==========================================
 elif mode == "2. Social Data Analysis (Universal)":
     st.header("2. Social Data Analysis")
-    st.sidebar.header("Settings")
-    st.sidebar.header("Settings")
     
-    # --- CUSTOM AI LENS (PERSONA) ---
-    preset_personas = [
-        "Strategic Intelligence Analyst", 
-        "Mass Psychologist (Emotional)", 
-        "Legal Consultant (Defamation/Risk)", 
-        "Campaign Manager (Opportunity)",
-        "Custom (Define your own role...)"
-    ]
+    # Creiamo due colonne per la schermata principale
+    col_impostazioni_1, col_impostazioni_2 = st.columns([1, 1])
     
-    selected_persona = st.sidebar.selectbox("Analysis Lens (Persona)", preset_personas)
-    
-    if selected_persona == "Custom (Define your own role...)":
-        # Allow the user to input any specific professional perspective
-        persona = st.sidebar.text_input("Enter Custom Persona", value="Cybersecurity Expert hunting for coordination", help="Define the exact role the AI should assume for the analysis.")
-    else:
-        persona = selected_persona
+    with col_impostazioni_1:
+        st.subheader("Data Input")
+        input_method = st.radio("Input Method:", 
+            ["CSV File Upload", "YouTube Link", "Raw Text Paste", "Telegram Dump (JSON)", "Reddit Native (OSINT)"], 
+            horizontal=False # Messo in verticale per pulizia, puoi rimettere True se preferisci
+        )
+        
+    with col_impostazioni_2:
+        st.subheader("Analysis Settings")
+        preset_personas = [
+            "Strategic Intelligence Analyst", 
+            "Mass Psychologist (Emotional)", 
+            "Legal Consultant (Defamation/Risk)", 
+            "Campaign Manager (Opportunity)",
+            "Custom (Define your own role...)"
+        ]
+        selected_persona = st.selectbox("Analysis Lens (Persona)", preset_personas)
+        
+        if selected_persona == "Custom (Define your own role...)":
+            persona = st.text_input("Enter Custom Persona", value="Cybersecurity Expert hunting for coordination", help="Define the exact role the AI should assume for the analysis.")
+        else:
+            persona = selected_persona
+            
+        context_input = st.text_input("Global Context (Optional)", placeholder="E.g., 'Discussion about Flat Earth'")
 
-    input_method = st.sidebar.radio("Input Method:", ["CSV File Upload", "YouTube Link", "Raw Text Paste", "Telegram Dump (JSON)", "Reddit Native (OSINT)"], horizontal=True)
-    st.markdown("---")
-    context_input = st.text_input("Global Context (Optional)", placeholder="E.g., 'Discussion about Flat Earth'")
     st.markdown("---")
 
     current_storage = st.session_state['data_store'][input_method]
@@ -1348,20 +1457,32 @@ elif mode == "2. Social Data Analysis (Universal)":
                     st.success(f"Extracted {len(pdf_parsed)} items.")
 
     elif input_method == "Telegram Dump (JSON)":
+        st.info("Chameleon Protocol: Live Infiltration or JSON Offline Dump.")
         with st.form("tg_form"):
-            tg_file = st.file_uploader("Upload Telegram Chat Export (JSON)", type="json")
-            submitted = st.form_submit_button("Extract Intel")
-            if submitted and tg_file:
-                with st.spinner("Decrypting Telegram Dump..."):
-                    tg_df = parse_telegram_json(tg_file)
-                    if tg_df is not None:
+            # --- CHAMELEON: DUAL INPUT UI ---
+            tg_url = st.text_input("1. LIVE: Enter Public Channel URL (e.g., t.me/rian_ru)", placeholder="Leaves no trace. Max 30 recent messages.")
+            tg_file = st.file_uploader("2. OFFLINE: Upload Telegram Chat Export (JSON)", type="json")
+            submitted = st.form_submit_button("Extract Intel", type="primary")
+            
+            if submitted:
+                tg_df = None
+                with st.spinner("Infiltrating Telegram..."):
+                    # Priority 1: Live Scraping
+                    if tg_url:
+                        tg_df = scrape_telegram_live(tg_url)
+                    # Priority 2: Offline JSON parsing
+                    elif tg_file:
+                        tg_df = parse_telegram_json(tg_file)
+                        
+                    # Process and store the data if extraction was successful
+                    if tg_df is not None and not tg_df.empty:
                         tg_df = detect_bot_activity(tg_df)
                         st.session_state['data_store'][input_method]['df'] = tg_df
                         st.session_state['data_store'][input_method]['analyzed'] = None 
                         st.session_state['data_store'][input_method]['summary'] = None
                         st.success(f"Intercepted {len(tg_df)} messages.")
                     else:
-                        st.error("Invalid Telegram JSON format.")
+                        st.error("Extraction failed. Check the URL (must be public) or the JSON file format.")
 
     elif input_method == "Reddit Native (OSINT)":
         with st.form("reddit_form"):
@@ -1651,6 +1772,7 @@ elif mode == "2. Social Data Analysis (Universal)":
                                 st.markdown(f"**Agent ID:** `{row['agent_id']}`")
                                 st.markdown(f"**Threat Score:** {int(row['threat_score'])}")
                                 st.caption(f"Fallacies: {row['fallacy_count']} | Impact: {row['total_impact']} likes")
+                                save_to_panopticon(row['agent_id'], row['threat_score'], "High-Value Target")
                     else:
                         st.success("No High-Value Targets detected (Network is relatively healthy).")
                 else:
@@ -1774,8 +1896,8 @@ elif mode == "2. Social Data Analysis (Universal)":
                         ).properties(height=300)
                         st.altair_chart(chart, use_container_width=True)
                 with c_chart2:
-                    st.caption("Crisis Trend (Forecast)")
-                    proj_data, is_escalating = project_trend(adf)
+                    st.caption("Crisis Trend (Chronos Forecast)")
+                    proj_data, is_escalating, time_to_crit = project_trend(adf)
                     if proj_data is not None:
                         base = alt.Chart(proj_data).mark_line().encode(
                             x=alt.X('Date:T', title='Timeline'),
@@ -1784,11 +1906,15 @@ elif mode == "2. Social Data Analysis (Universal)":
                             tooltip=['Date:T', 'Aggression', 'Type']
                         )
                         st.altair_chart(base, use_container_width=True)
-                        st.caption(f"**Forecast:** {'⚠️ Escalating' if is_escalating else '📉 Stabilizing'}")
+                        
+                        if is_escalating and time_to_crit is not None:
+                            st.error(f"**CHRONOS ALERT:** Threshold breach (9.0) projected in ~{int(time_to_crit)} days.")
+                        else:
+                            st.caption(f"**Forecast:** {'⚠️ Escalating' if is_escalating else '📉 Stabilizing'}")
                     else:
                         st.caption("Sequence Trend (No valid dates found)")
                         adf['Sequence'] = adf.index
-                        line = alt.Chart(adf).mark_line(color='orange').encode(x='Sequence', y='aggression', tooltip=['content', 'aggression'])
+                        line = alt.Chart(adf).mark_line(color='orange').encode(x='Sequence', y='aggression')
                         st.altair_chart(line, use_container_width=True)
 
                 st.markdown("---")
@@ -2771,18 +2897,25 @@ elif mode == "5. Live Radar (RSS/Reddit)":
                     Avg_Tension=('aggression', 'mean')
                 ).reset_index()
                 
-                fig_map = px.choropleth(
+                fig_map = px.scatter_geo(
                     geo_stats, 
                     locations="iso_country", 
+                    size="News_Count",
                     color="Avg_Tension",
                     hover_name="iso_country",
-                    hover_data=["News_Count"],
+                    projection="orthographic",
                     color_continuous_scale=px.colors.sequential.Reds,
                     range_color=(0, 10),
-                    title="Live Global Tension Heatmap"
+                    title="God's Eye: Live Global Threat Sphere"
                 )
                 fig_map.update_layout(
-                    geo=dict(showframe=False, showcoastlines=True, projection_type='equirectangular', bgcolor='rgba(0,0,0,0)'),
+                    geo=dict(
+                        showframe=False, showcoastlines=True, 
+                        showocean=True, oceancolor='rgba(10, 15, 30, 1)',
+                        lakecolor='rgba(10, 15, 30, 1)',
+                        landcolor='rgba(20, 25, 40, 1)',
+                        bgcolor='rgba(0,0,0,0)'
+                    ),
                     paper_bgcolor='rgba(0,0,0,0)', margin=dict(l=0, r=0, t=40, b=0)
                 )
                 st.plotly_chart(fig_map, use_container_width=True)
