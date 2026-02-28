@@ -278,17 +278,14 @@ def generate_audio_waveform(audio_bytes):
     except:
         return None
 
-# --- HELPER: PII SANITIZER (PRIVACY REDACTION) ---
+# --- HELPER: PII SANITIZER (OPERATION BLACKOUT - CIA STYLE) ---
 def sanitize_pii(text):
     if not isinstance(text, str): return text
-    # Redact Emails
-    text = re.sub(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', '[REDACTED_EMAIL]', text)
-    # Redact International Phone Numbers
-    text = re.sub(r'\b\+?\d{1,3}?[-.\s]?\(?\d{2,3}?\)?[-.\s]?\d{3}[-.\s]?\d{4}\b', '[REDACTED_PHONE]', text)
-    # Redact IBANs or Cards (Basic)
-    text = re.sub(r'\b[A-Z]{2}\d{2}[a-zA-Z0-9]{11,30}\b', '[REDACTED_IBAN]', text)
-    # Redact IP Addresses
-    text = re.sub(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', '[REDACTED_IP]', text)
+    # Replace sensitive data with solid black blocks (Classified Redaction)
+    text = re.sub(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', '██████████', text)
+    text = re.sub(r'\b\+?\d{1,3}?[-.\s]?\(?\d{2,3}?\)?[-.\s]?\d{3}[-.\s]?\d{4}\b', '██████████', text)
+    text = re.sub(r'\b[A-Z]{2}\d{2}[a-zA-Z0-9]{11,30}\b', '████████████████', text)
+    text = re.sub(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', '████████', text)
     return text
 
 # --- HELPER: CALLBACK FOR DATA EDITOR ---
@@ -785,7 +782,7 @@ def analyze_fallacies_cached(text, api_key, context_info="", persona="Logic & Fa
             - propaganda_tactic: Identify Military Info-War Tactics (e.g., Firehose of Falsehood, Astroturfing, Dead Cat, Whataboutism) if present.
             RULES: Opinions/Sarcasm -> 'has_fallacy': false. You MUST still find standard logical fallacies in 'fallacy_type'.
             RESPONSE (Strict JSON):
-            {{ "has_fallacy": bool, "fallacy_type": "Name", "propaganda_tactic": "Name", "explanation": "Text", "correction": "Text", "main_topic": "Text", "micro_topic": "Text", "target": "Text", "primary_emotion": "Text", "archetype": "Text", "relevance": "Text", "counter_reply": "Text", "sentiment": "Text", "aggression": 0, "sophistication": 0, "hostile_intent": 0 }}
+            {{ "has_fallacy": bool, "fallacy_type": "Name", "propaganda_tactic": "Name", "explanation": "Text", "correction": "Text", "main_topic": "Text", "micro_topic": "Text", "target": "Text", "primary_emotion": "Text", "archetype": "Text", "relevance": "Text", "counter_reply": "Text", "sentiment": "Text", "translated_text": "Translate the original text into {target_lang} here", "aggression": 0, "sophistication": 0, "hostile_intent": 0 }}
             """
             if is_long: prompt = f"Analyze LONG.\n{common_instructions}\nText: \"{text[:15000]}...\""
             else: prompt = f"Analyze Text.\n{common_instructions}\nText: \"{text}\""
@@ -804,7 +801,7 @@ def analyze_fallacies(text, api_key=None, context_info="", persona="Logic & Fact
     return res
 
 # --- HELPER: COGNITIVE EDITOR (MULTIMODAL + AI DETECTOR) ---
-def cognitive_rewrite(text, api_key, media_data=None, media_type="image"):
+def cognitive_rewrite(text, api_key, media_data=None, media_type="image", target_lang="English"):
     if (not text or len(str(text)) < 3) and not media_data: return None
     try:
         client = genai.Client(api_key=api_key)
@@ -829,11 +826,13 @@ def cognitive_rewrite(text, api_key, media_data=None, media_type="image"):
         4. SYLLOGISM MACHINE: Deconstruct the core argument of the text/speech into formal logical steps.
         5. VIDEO TIMELINE: MANDATORY IF YOU SEE A STORYBOARD GRID OR A VIDEO: Provide at least 5-8 timestamp objects in the 'video_timeline' array. Read the red timestamp text on the frames (e.g., "0.00s", "2.50s") and use those for the 'timestamp' field. Detail the EXACT physical anomalies or morphing glitches at each frame. Do NOT describe the plot; describe the physical artifacts.
         6. AGGRESSION: Score emotional intensity from 0 to 10.
+        7. GHOST READER (OCR): Extract ANY visible text (signs, documents, screens) from the media. You MUST provide BOTH the original text AND its direct translation in the 'ocr_extraction' field. Format it elegantly with a double line break between them, EXACTLY like this:
+        "**Original:** [text]
+        
+        **Translation ({target_lang}):** [text]"
         
         CRITICAL LANGUAGE RULE: 
-        1. IF 'Input Text/Context' IS PROVIDED: Detect its language and use it for ALL output values.
-        2. IF 'Input Text/Context' IS EMPTY: Check the MEDIA content. If English, use ENGLISH. If Italian, use ITALIAN. Default to English if unsure.
-        3. ABSOLUTE CONSISTENCY: Every single field MUST be in the target language.
+        You MUST write EVERY single output field (explanation, ai_analysis, shadow_geolocation, etc.) and translations STRICTLY in {target_lang}. Ignore the original language of the media or text input for your output language.
         
         JSON OUTPUT RULES (Keep keys in English):
         - "fallacy_type": Name of the issue/fallacy.
@@ -844,6 +843,7 @@ def cognitive_rewrite(text, api_key, media_data=None, media_type="image"):
         - "shadow_geolocation": String with detailed geographic deduction.
         - "aggression": Integer (0 to 10).
         - "transcript": EXACT word-for-word transcription. Leave empty if none.
+        - "ocr_extraction": String with all visible text extracted from the image/video.
         
         RESPONSE (Strict JSON):
         {{
@@ -860,7 +860,8 @@ def cognitive_rewrite(text, api_key, media_data=None, media_type="image"):
             "shadow_geolocation": "",
             "syllogism_breakdown": [],
             "video_timeline": [],
-            "search_sources": []
+            "search_sources": [],
+            "ocr_extraction": ""
         }}
         """
         
@@ -1027,6 +1028,16 @@ mode = st.sidebar.radio("Select Module:", [
     "6. Deep Document Oracle (RAG)"
 ])
 
+# --- GLOBAL LANGUAGE SELECTOR ---
+st.sidebar.markdown("---")
+world_languages = [
+    "English", "Italiano", "Español", "Français", "Deutsch", "Português",
+    "Русский (Russian)", "العربية (Arabic)", "中文 (Chinese)", 
+    "日本語 (Japanese)", "فارسی (Persian)", "हिन्दी (Hindi)", 
+    "한국어 (Korean)", "Türkçe (Turkish)"
+]
+report_language = st.sidebar.selectbox("Global Output Language", world_languages, index=0)
+
 # --- DISCLAIMER & METRICS ---
 st.sidebar.markdown("---")
 if "GEMINI_API_KEY" in st.secrets:
@@ -1051,7 +1062,7 @@ with st.sidebar.expander("ℹ️ Capabilities", expanded=False):
 
 # --- CLEAR WORKSPACE BUTTON ---
 st.sidebar.markdown("---")
-if st.sidebar.button("Clear Workspace", type="secondary", help="Erase all current session data and start a clean investigation"):
+if st.sidebar.button("Clear Workspace", type="primary", help="Erase all current session data and start a clean investigation"):
     # Delete specific keys to reset the dashboard state
     keys_to_clear = ['data_store', 'oracle_history', 'doc_oracle_history', 'doc_full_text', 'global_entities']
     for key in keys_to_clear:
@@ -1273,14 +1284,7 @@ elif mode == "2. Social Data Analysis (Universal)":
         persona = st.sidebar.text_input("Enter Custom Persona", value="Cybersecurity Expert hunting for coordination", help="Define the exact role the AI should assume for the analysis.")
     else:
         persona = selected_persona
-    
-    world_languages = [
-        "English", "Italiano", "Español", "Français", "Deutsch", "Português",
-        "Русский (Russian)", "العربية (Arabic)", "中文 (Chinese)", 
-        "日本語 (Japanese)", "فارسی (Persian)", "हिन्दी (Hindi)", 
-        "한국어 (Korean)", "Türkçe (Turkish)"
-    ]
-    report_language = st.sidebar.selectbox("Report Output Language", world_languages)
+
     input_method = st.sidebar.radio("Input Method:", ["CSV File Upload", "YouTube Link", "Raw Text Paste", "Telegram Dump (JSON)", "Reddit Native (OSINT)"], horizontal=True)
     st.markdown("---")
     context_input = st.text_input("Global Context (Optional)", placeholder="E.g., 'Discussion about Flat Earth'")
@@ -1549,7 +1553,7 @@ elif mode == "2. Social Data Analysis (Universal)":
                 with c_psy1:
                     unique_users = adf['agent_id'].unique()
                     selected_target = st.selectbox("Select Target (Agent ID)", unique_users)
-                    run_psyops = st.button("Run Behavioral Profile", type="secondary")
+                    run_psyops = st.button("Run Behavioral Profile", type="primary")
                 
                 with c_psy2:
                     if run_psyops:
@@ -1861,7 +1865,12 @@ elif mode == "2. Social Data Analysis (Universal)":
                         likes_tag = f" | 👍 {r.get('likes', 0)}"
                         arch_tag = f" | 🎭 {r.get('archetype', 'User')}"
                         c2.caption(f"**User:** {r.get('agent_id', 'User')} | **Agg:** {r.get('aggression')}/10 {likes_tag}{emotion_tag}{arch_tag}{bot_msg}")
-                        st.info(f"\"{r['content']}\"")
+                        # --- UNIVERSAL TRANSLATOR UI ---
+                        translated = str(r.get('translated_text', ''))
+                        if translated and translated.lower() not in ["none", "nan", "", "null"] and translated != r['content']:
+                            st.info(f"**[Translated]:** \"{translated}\"\n\n*Original:* {r['content']}")
+                        else:
+                            st.info(f"\"{r['content']}\"")
                         if r['has_fallacy']:
                             st.error(f"**{r['fallacy_type']}**: {r['explanation']}")
                             if r.get('counter_reply'):
@@ -2081,7 +2090,7 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio/Video)":
         if go:
             if media_inp or text_inp:
                 with st.spinner(f"Processing with Gemini ({inp_type})..."):
-                    ret = cognitive_rewrite(text_inp, key, media_inp, media_type)
+                    ret = cognitive_rewrite(text_inp, key, media_inp, media_type, target_lang=report_language)
                     
                     if ret:
                         # --- AI SCANNER UI ---
@@ -2169,6 +2178,13 @@ elif mode == "3. Cognitive Editor (Text/Image/Audio/Video)":
                         if media_type in ["image", "video"] and ret.get('shadow_geolocation') and ret.get('shadow_geolocation') != "Not applicable":
                             st.markdown("#### Shadow Geolocation (Visual GeoINT)")
                             st.info(f"**AI Visual Deduction:** {ret['shadow_geolocation']}")
+                            st.markdown("---")
+                        
+                        # --- GHOST READER (OCR FORENSICS) ---
+                        if ret.get('ocr_extraction') and ret.get('ocr_extraction').lower() not in ["none", "n/a", "", "null"]:
+                            st.markdown("#### Ghost Reader (OCR Extraction)")
+                            st.caption("AI optical scan of texts hidden in the media (signs, screens, documents).")
+                            st.info(f"{ret['ocr_extraction']}")
                             st.markdown("---")
 
                         # --- AUDIO/VIDEO TRANSCRIPTION ---
@@ -2536,6 +2552,8 @@ elif mode == "5. Live Radar (RSS/Reddit)":
     with c_radar3:
         max_entries = st.number_input("Entries", 5, 50, 15)
         fetch_btn = st.button("Step 1: Fetch Feed", type="primary", use_container_width=True)
+        # --- DEFCON CYBER SCAN BUTTON ---
+        defcon_btn = st.button("🚨 DEFCON Cyber Scan", type="primary", use_container_width=True)
     # --- AUTOMATED ALERT CONFIGURATION ---
     with st.expander("Automated Alert Configuration (Webhook)"):
         alert_webhook = st.text_input("Webhook URL", placeholder="https://hooks.slack.com/services/...", help="If Aggression exceeds the threshold, an alert payload will be dispatched here.")
@@ -2556,11 +2574,18 @@ elif mode == "5. Live Radar (RSS/Reddit)":
         alert_threshold = st.slider("Trigger Alert Threshold (Aggression)", min_value=1.0, max_value=10.0, value=8.0, step=0.5, help="Dispatch alerts only if the average aggression exceeds this level.")
         st.caption(f"Note: System will dispatch emergency protocols if average aggression spikes above {alert_threshold}/10.")
 
-    # --- STEP 1: FETCH DATA ---
-    if fetch_btn and feed_url:
+    if (fetch_btn and feed_url) or defcon_btn:
         with st.spinner("Intercepting live feed..."):
             try:
-                user_input = feed_url.strip().lower()
+                user_input = ""
+                
+                if defcon_btn:
+                    actual_url = "https://feeds.feedburner.com/TheHackersNews"
+                    st.toast("DEFCON Protocol Activated: Intercepting Global Cyber Threats...", icon="🚨")
+                else:
+                    user_input = feed_url.strip().lower()
+                    actual_url = feed_url.strip()
+                    
                 news_shortcuts = {
                     "ansa": "https://www.ansa.it/sito/ansait_rss.xml",
                     "repubblica": "https://www.repubblica.it/rss/homepage/rss2.0.xml",
@@ -2570,10 +2595,9 @@ elif mode == "5. Live Radar (RSS/Reddit)":
                     "nytimes": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"
                 }
                 
-                actual_url = feed_url.strip()
-                if user_input in news_shortcuts:
+                if user_input and user_input in news_shortcuts:
                     actual_url = news_shortcuts[user_input]
-                elif "reddit.com/r/" in user_input and not user_input.endswith(".rss"):
+                elif user_input and "reddit.com/r/" in user_input and not user_input.endswith(".rss"):
                     if actual_url.endswith("/"): actual_url = actual_url[:-1]
                     actual_url += "/new/.rss"
                 elif not actual_url.startswith("http"):
@@ -2982,7 +3006,16 @@ elif mode == "6. Deep Document Oracle (RAG)":
                     with st.spinner("Sanitizing sensitive data..."):
                         clean_text = sanitize_pii(st.session_state['doc_full_text'])
                         st.session_state['doc_full_text'] = clean_text
-                        st.success("Document successfully sanitized!")
+                        st.success("Document successfully sanitized (CIA Blackout Protocol)!")
+            
+            # --- DOWNLOAD REDACTED DOSSIER ---
+            st.download_button(
+                label="⬛ Download Redacted Dossier (TXT)",
+                data=st.session_state['doc_full_text'].encode('utf-8'),
+                file_name=f"RAP_Classified_Redacted_{datetime.now().strftime('%Y%m%d')}.txt",
+                mime="text/plain",
+                type="primary"
+            )
             # ------------------------------
             
             # --- MODIFICA KNOWLEDGE GRAPH (Modulo 6) ---
