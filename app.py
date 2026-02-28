@@ -2329,7 +2329,7 @@ elif mode == t("3. Cognitive Editor (Text/Image/Audio/Video)"):
         
         elif inp_type == t("Video (Deepfake Scan)"):
             text_inp = st.text_area(t("Video Context (Optional)"), placeholder=t("What is this video claiming?"), height=100)
-            text_inp = "CRITICAL INSTRUCTION: You are looking at a Forensic Storyboard grid of a video... [ENG PROMPT]"
+            text_inp = "CRITICAL INSTRUCTION: You are looking at a Forensic Storyboard grid of a video, not a single photo. Compare the physical consistency of the matter between the different frames to find AI glitches.\n\n" + str(text_inp)
             f = st.file_uploader(t("Upload Video (Max 50MB)"), type=['mp4', 'mov'])
             if f:
                 raw_video_bytes = f.read()
@@ -2467,7 +2467,6 @@ elif mode == t("4. Comparison Test (A/B Testing)"):
     
     col_a, col_b = st.columns(2)
     
-    # Helper function for Arena data loading with translated UI
     def load_arena_data(key_prefix, column):
         with column:
             in_type = st.radio(f"{t('Input')} {key_prefix}", [t("YouTube Link"), t("CSV Upload"), t("Raw Text Paste")], horizontal=True, key=f"r_{key_prefix}")
@@ -2533,32 +2532,27 @@ elif mode == t("4. Comparison Test (A/B Testing)"):
             start_analysis = st.button(t("Step 3: Run Comparative Analysis"), type="primary", disabled=not key)
 
         if start_analysis:
-            # Analyze Contender A
             subset_a = edited_a[edited_a.Select]
             if subset_a.empty: subset_a = edited_a.head(max_analyze)
-            
             prog_a = st.progress(0)
             res_a = []
             st.markdown(f"**{t('Analyzing Contender A...')}**")
             for i, (_, row) in enumerate(subset_a.iterrows()):
-                res_a.append(analyze_fallacies(row['content'], api_key=key))
+                res_a.append(analyze_fallacies(row['content'], api_key=key, target_lang=st.session_state['global_lang']))
                 prog_a.progress((i + 1) / len(subset_a))
             final_a = pd.concat([subset_a.reset_index(drop=True), pd.DataFrame(res_a)], axis=1)
             st.session_state['data_store']['Arena']['analyzed_a'] = final_a
 
-            # Analyze Contender B
             subset_b = edited_b[edited_b.Select]
             if subset_b.empty: subset_b = edited_b.head(max_analyze)
-
             prog_b = st.progress(0)
             res_b = []
             st.markdown(f"**{t('Analyzing Contender B...')}**")
             for i, (_, row) in enumerate(subset_b.iterrows()):
-                res_b.append(analyze_fallacies(row['content'], api_key=key))
+                res_b.append(analyze_fallacies(row['content'], api_key=key, target_lang=st.session_state['global_lang']))
                 prog_b.progress((i + 1) / len(subset_b))
             final_b = pd.concat([subset_b.reset_index(drop=True), pd.DataFrame(res_b)], axis=1)
             st.session_state['data_store']['Arena']['analyzed_b'] = final_b
-            
             st.rerun()
 
     res_df_a = st.session_state['data_store']['Arena']['analyzed_a']
@@ -2584,12 +2578,10 @@ elif mode == t("4. Comparison Test (A/B Testing)"):
         
         st.markdown("---")
         st.subheader(t("Tactical Visual Comparison"))
-        
         res_df_a['Source'] = t('Contender A')
         res_df_b['Source'] = t('Contender B')
         combined = pd.concat([res_df_a, res_df_b])
         
-        # 1. Base Aggression Chart (Translated axes)
         chart_agg = alt.Chart(combined).mark_bar().encode(
             x=alt.X('Source', title=None),
             y=alt.Y('mean(aggression)', title=t('Avg Aggression')),
@@ -2628,23 +2620,44 @@ elif mode == t("4. Comparison Test (A/B Testing)"):
                 else:
                     st.success(t("No fallacies detected in either contender."))
 
-        # --- AI NARRATIVE CLASH BRIEFING ---
         st.markdown("---")
         st.subheader(t("The Oracle: Narrative Clash Assessment"))
         st.caption(t("Force the AI to analyze the differing psychological and tactical profiles of the two contenders."))
         
         if st.button(t("Generate Clash Briefing"), type="primary"):
             with st.spinner(t("Analyzing psychological divergence...")):
-                # Prompt remains technical but UI elements around it are translated
                 top_emotions_a = res_df_a['primary_emotion'].value_counts().head(3).to_dict() if 'primary_emotion' in res_df_a else "N/A"
                 top_emotions_b = res_df_b['primary_emotion'].value_counts().head(3).to_dict() if 'primary_emotion' in res_df_b else "N/A"
+                top_fallacies_a = res_df_a['fallacy_type'].value_counts().head(3).to_dict() if 'fallacy_type' in res_df_a else "N/A"
+                top_fallacies_b = res_df_b['fallacy_type'].value_counts().head(3).to_dict() if 'fallacy_type' in res_df_b else "N/A"
                 sample_a = res_df_a['content'].iloc[0] if not res_df_a.empty else ""
                 sample_b = res_df_b['content'].iloc[0] if not res_df_b.empty else ""
                 
-                clash_prompt = f"You are an elite analyst... [PROMPT DATA]"
+                clash_prompt = f"""
+                You are an elite Information Warfare and Psychological Operations Analyst.
+                Compare these two opposing groups (Contender A vs Contender B).
+                
+                CONTENDER A:
+                - Avg Aggression: {agg_a:.1f}/10
+                - Dominant Emotions: {top_emotions_a}
+                - Primary Logical Fallacies used: {top_fallacies_a}
+                - Sample Text: "{sample_a[:200]}"
+                
+                CONTENDER B:
+                - Avg Aggression: {agg_b:.1f}/10
+                - Dominant Emotions: {top_emotions_b}
+                - Primary Logical Fallacies used: {top_fallacies_b}
+                - Sample Text: "{sample_b[:200]}"
+                
+                TASK: Write a sharp, tactical "Narrative Clash Briefing" (strictly max 150 words). 
+                Do not just list the numbers. Explain *HOW* their manipulation strategies differ. 
+                Conclude by stating which group poses a higher risk of inciting real-world polarization.
+                
+                CRITICAL RULE: You MUST write the ENTIRE briefing strictly in {st.session_state['global_lang']}.
+                """
                 try:
                     client = genai.Client(api_key=key)
-                    clash_res = client.models.generate_content(model='gemini-2.0-flash', contents=clash_prompt)
+                    clash_res = client.models.generate_content(model='gemini-2.5-flash', contents=clash_prompt)
                     st.warning(f"### {t('Tactical Clash Report')}")
                     st.markdown(clash_res.text)
                 except Exception as e:
@@ -2653,20 +2666,52 @@ elif mode == t("4. Comparison Test (A/B Testing)"):
         with st.expander(t("Detailed Comparison Data")):
             st.dataframe(combined[['Source', 'content', 'aggression', 'primary_emotion', 'fallacy_type', 'is_bot']])
 
-        # --- PDF EXPORT FOR ARENA ---
         st.markdown("---")
         st.subheader(t("Export Battle Report"))
         st.caption(t("Generate a comparative PDF dossier detailing the metrics between Contender A and Contender B."))
         
         if st.button(t("Generate Arena PDF"), type="primary"):
             with st.spinner(t("Compiling the comparative report...")):
-                # Internal PDF logic uses English but labels are wrapped if possible
                 pdf = PDFReport()
                 pdf.add_page()
+                pdf.set_auto_page_break(auto=True, margin=15)
                 pdf.set_font("Helvetica", 'B', 14)
-                pdf.cell(0, 10, f"{t('Comparative Dossier')}: {t('Narrative A/B Testing')}", 0, 1)
-                # ... (rest of PDF generation logic remains similar)
+                pdf.cell(0, 10, "Comparative Dossier: Narrative A/B Testing", 0, 1)
+                pdf.ln(5)
                 
+                pdf.set_font("Helvetica", 'B', 12)
+                pdf.cell(0, 10, "Contender A Profile:", 0, 1)
+                pdf.set_font("Helvetica", '', 11)
+                pdf.cell(0, 8, f"- Analyzed Items: {len(res_df_a)}", 0, 1)
+                pdf.cell(0, 8, f"- Average Aggression: {agg_a:.1f}/10", 0, 1)
+                pdf.cell(0, 8, f"- Detected Bots: {bots_a}", 0, 1)
+                pdf.cell(0, 8, f"- Logical Fallacies Flagged: {fallacy_a}", 0, 1)
+                pdf.ln(5)
+
+                pdf.set_font("Helvetica", 'B', 12)
+                pdf.cell(0, 10, "Contender B Profile:", 0, 1)
+                pdf.set_font("Helvetica", '', 11)
+                pdf.cell(0, 8, f"- Analyzed Items: {len(res_df_b)}", 0, 1)
+                pdf.cell(0, 8, f"- Average Aggression: {agg_b:.1f}/10", 0, 1)
+                pdf.cell(0, 8, f"- Detected Bots: {bots_b}", 0, 1)
+                pdf.cell(0, 8, f"- Logical Fallacies Flagged: {fallacy_b}", 0, 1)
+                pdf.ln(5)
+                
+                pdf.set_font("Helvetica", 'B', 12)
+                pdf.cell(0, 10, "Tactical Conclusion:", 0, 1)
+                pdf.set_font("Helvetica", 'I', 11)
+                
+                if agg_a > agg_b + 1.5:
+                    conclusion = "Contender A exhibits a significantly higher level of hostility and aggression. It poses a greater immediate risk for polarization."
+                elif agg_b > agg_a + 1.5:
+                    conclusion = "Contender B exhibits a significantly higher level of hostility and aggression. It poses a greater immediate risk for polarization."
+                else:
+                    conclusion = "Both contenders present comparable levels of aggression. The threat level is balanced between the two narratives."
+                    
+                if bots_a > bots_b: conclusion += f" Furthermore, Contender A shows higher signs of inauthentic/bot activity (+{delta_bots})."
+                elif bots_b > bots_a: conclusion += f" Furthermore, Contender B shows higher signs of inauthentic/bot activity (+{abs(delta_bots)})."
+
+                pdf.multi_cell(0, 6, conclusion.encode('latin-1', 'replace').decode('latin-1'))
                 pdf_bytes_arena = bytes(pdf.output())
                 
             st.download_button(
@@ -2684,54 +2729,88 @@ elif mode == t("5. Live Radar (RSS/Reddit)"):
     st.header(t("5. Live Radar (Crisis Alert System)"))
     st.caption(t("Monitor live RSS feeds or subreddits to intercept escalating disinformation and aggression in real-time."))
     
-    # API Key Handling (Translated)
-    if "GEMINI_API_KEY" in st.secrets: 
-        key = st.secrets["GEMINI_API_KEY"]
-    else: 
-        key = st.text_input(t("API Key"), type="password")
+    if "GEMINI_API_KEY" in st.secrets: key = st.secrets["GEMINI_API_KEY"]
+    else: key = st.text_input(t("API Key"), type="password")
     
     c_radar1, c_radar2, c_radar3 = st.columns([2, 1, 1])
     with c_radar1:
-        feed_url = st.text_input(t("Enter RSS Feed, Subreddit, or News Keyword"), placeholder=t("E.g., ansa, bbc, reddit.com/r/worldnews"))
+        feed_url = st.text_input(t("Enter RSS Feed, Subreddit, or News Keyword"), placeholder="E.g., ansa, bbc, repubblica, reddit.com/r/worldnews")
     with c_radar2:
         world_languages = [
             "English", "Italiano", "Español", "Français", "Deutsch", "Português",
             "Русский (Russian)", "العربية (Arabic)", "中文 (Chinese)", 
             "日本語 (Japanese)", "فارسی (Persian)", "हिन्दी (Hindi)", 
-            "韓国어 (Korean)", "Türkçe (Turkish)"
+            "한국어 (Korean)", "Türkçe (Turkish)"
         ]
         news_region = st.selectbox(t("Search Language/Region"), world_languages, index=1)
     with c_radar3:
         max_entries = st.number_input(t("Entries"), 5, 50, 15)
         fetch_btn = st.button(t("Step 1: Fetch Feed"), type="primary", use_container_width=True)
-        # --- DEFCON CYBER SCAN BUTTON ---
         defcon_btn = st.button(f"🚨 {t('DEFCON Cyber Scan')}", type="primary", use_container_width=True)
-
-    # --- AUTOMATED ALERT CONFIGURATION (Translated) ---
-    with st.expander(t("Automated Alert Configuration (Webhook)")):
-        alert_webhook = st.text_input(t("Webhook URL"), placeholder="https://hooks.slack.com/...", help=t("If Aggression exceeds the threshold, an alert payload will be dispatched here."))
         
+    with st.expander(t("Automated Alert Configuration (Webhook)")):
+        alert_webhook = st.text_input(t("Webhook URL"), placeholder="https://hooks.slack.com/services/...", help=t("If Aggression exceeds the threshold, an alert payload will be dispatched here."))
         with st.expander(f"ℹ️ {t('How to get a Webhook URL (Discord / Slack)')}"):
-            st.markdown(f"""
-            **{t('For Discord')}:**
-            1. {t('Open Server Settings -> Integrations -> Webhooks')}.
-            2. {t('Click New Webhook, name it RAP Sentinel, and Copy Webhook URL')}.
-            """)
+            st.markdown("""
+            **For Discord:**
+            1. Open your Server Settings -> **Integrations** -> **Webhooks**.
+            2. Click **New Webhook**, name it "RAP Sentinel", select a channel, and click **Copy Webhook URL**.
             
+            **For Slack:**
+            1. Go to your Workspace Administration -> **Manage Apps**.
+            2. Search for **Incoming Webhooks** and add it to your desired channel.
+            3. Copy the generated **Webhook URL**.
+            """)
         alert_threshold = st.slider(t("Trigger Alert Threshold (Aggression)"), min_value=1.0, max_value=10.0, value=8.0, step=0.5)
         st.caption(f"{t('Note: System will dispatch emergency protocols if average aggression spikes above')} {alert_threshold}/10.")
 
     if (fetch_btn and feed_url) or defcon_btn:
         with st.spinner(t("Intercepting live feed...")):
             try:
-                # Logic for feed fetching (Internal shortcuts remain English/Technical)
-                user_input = feed_url.strip().lower() if not defcon_btn else "defcon"
-                actual_url = feed_url.strip()
+                user_input = ""
+                if defcon_btn:
+                    actual_url = "https://feeds.feedburner.com/TheHackersNews"
+                    st.toast("DEFCON Protocol Activated: Intercepting Global Cyber Threats...", icon="🚨")
+                else:
+                    user_input = feed_url.strip().lower()
+                    actual_url = feed_url.strip()
+                    
+                news_shortcuts = {
+                    "ansa": "https://www.ansa.it/sito/ansait_rss.xml",
+                    "repubblica": "https://www.repubblica.it/rss/homepage/rss2.0.xml",
+                    "corriere": "http://xml2.corriereobjects.it/rss/homepage.xml",
+                    "bbc": "http://feeds.bbci.co.uk/news/world/rss.xml",
+                    "cnn": "http://rss.cnn.com/rss/edition.rss",
+                    "nytimes": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"
+                }
                 
-                # ... [Internal RSS Shortcut Mapping remains unchanged] ...
+                if user_input and user_input in news_shortcuts:
+                    actual_url = news_shortcuts[user_input]
+                elif user_input and "reddit.com/r/" in user_input and not user_input.endswith(".rss"):
+                    if actual_url.endswith("/"): actual_url = actual_url[:-1]
+                    actual_url += "/new/.rss"
+                elif not actual_url.startswith("http"):
+                    safe_query = actual_url.replace(" ", "%20")
+                    lang_map = {
+                        "English": "hl=en-US&gl=US&ceid=US:en",
+                        "Italiano": "hl=it&gl=IT&ceid=IT:it",
+                        "Español": "hl=es&gl=ES&ceid=ES:es",
+                        "Français": "hl=fr&gl=FR&ceid=FR:fr",
+                        "Deutsch": "hl=de&gl=DE&ceid=DE:de",
+                        "Português": "hl=pt-BR&gl=BR&ceid=BR:pt-419",
+                        "Русский (Russian)": "hl=ru&gl=RU&ceid=RU:ru",
+                        "العربية (Arabic)": "hl=ar&gl=EG&ceid=EG:ar",
+                        "中文 (Chinese)": "hl=zh-TW&gl=TW&ceid=TW:zh-Hant",
+                        "日本語 (Japanese)": "hl=ja&gl=JP&ceid=JP:ja",
+                        "فارسی (Persian)": "hl=fa&gl=IR&ceid=IR:fa",
+                        "हिन्दी (Hindi)": "hl=hi&gl=IN&ceid=IN:hi",
+                        "한국어 (Korean)": "hl=ko&gl=KR&ceid=KR:ko",
+                        "Türkçe (Turkish)": "hl=tr&gl=TR&ceid=TR:tr"
+                    }
+                    region_params = lang_map.get(news_region, "hl=it&gl=IT&ceid=IT:it")
+                    actual_url = f"https://news.google.com/rss/search?q={safe_query}&{region_params}"
                 
                 feed = feedparser.parse(actual_url)
-                
                 if not feed.entries:
                     st.error(t("Could not fetch entries. Check the URL or formatting."))
                 else:
@@ -2752,17 +2831,19 @@ elif mode == t("5. Live Radar (RSS/Reddit)"):
             except Exception as e:
                 st.error(f"{t('Radar Fetch Error')}: {str(e)}")
 
-    # --- STEP 2: SELECTION AND ANALYSIS ---
     radar_df = st.session_state['data_store'].get('Radar', {}).get('df')
     if radar_df is not None:
         st.divider()
         st.markdown(f"### {t('Step 2: Select News to Analyze')}")
+        st.caption(t("Select specific items using checkboxes. If none selected, the top N rows will be analyzed."))
         
         edited_radar = st.data_editor(
             radar_df,
             column_config={"Select": st.column_config.CheckboxColumn(required=True)},
             disabled=["timestamp", "content", "link"],
             key="editor_radar",
+            height=300,
+            hide_index=True,
             use_container_width=True
         )
         
@@ -2770,30 +2851,68 @@ elif mode == t("5. Live Radar (RSS/Reddit)"):
         with c_limit:
             max_analyze = st.number_input(t("Max Rows to Analyze"), 1, len(radar_df), min(10, len(radar_df)))
         with c_action:
+            st.write("") 
+            st.write("") 
             selected = edited_radar['Select'].sum()
-            btn_label = f"{t('Step 3: Run Threat Analysis')} ({selected if selected > 0 else f'Batch Top {max_analyze}'})"
-            analyze_btn = st.button(btn_label, type="primary", disabled=not key)
+            btn_testo = f"{t('Step 3: Run Threat Analysis')} ({selected})" if selected > 0 else f"{t('Step 3: Run Threat Analysis')} ({t('Batch Top')} {max_analyze})"
+            analyze_btn = st.button(btn_testo, type="primary", disabled=not key)
         
         if analyze_btn:
-            subset = edited_radar[edited_radar.Select] if selected > 0 else edited_radar.head(max_analyze)
-            
+            subset = edited_radar[edited_radar.Select]
+            if subset.empty:
+                subset = edited_radar.head(max_analyze)
+                st.info(f"Using top {len(subset)} rows (Auto-Batch).")
+            else:
+                st.success(f"Using {len(subset)} manually selected rows.")
+                
             prog = st.progress(0)
             res = []
             st.markdown(f"**{t('Running Threat Analysis (Crisis Protocol)...')}**")
             
             for i, (_, row) in enumerate(subset.iterrows()):
-                # Crisis analysis prompt (IA logic)
-                crisis_prompt = f"Analyze crisis level for: {row['content']}..."
-                # [Internal analysis logic remains English for LLM consistency]
-                # ... (API Call) ...
-                res.append(parsed)
+                crisis_prompt = f"""
+                You are an Early Warning Crisis & Threat Intelligence AI. 
+                Analyze the following news excerpt. 
+                CRITICAL INSTRUCTION: Do NOT evaluate the linguistic tone. Journalists write neutrally. 
+                Instead, evaluate the INHERENT CRISIS LEVEL, CONFLICT, and POLARIZATION of the EVENT described.
+                
+                Scoring Guide (0 to 10):
+                0-3 (Stable): Routine news, tech, sports, diplomacy.
+                4-6 (Elevated): Economic trouble, political scandals, peaceful protests.
+                7-8 (Critical): Riots, extreme societal polarization, localized violence.
+                9-10 (Extreme): War, terrorism, mass casualties, geopolitical collapse.
+                
+                News Text: "{row['content']}"
+                
+                CRITICAL LANGUAGE RULE: Write the "reasoning" strictly in {st.session_state['global_lang']}.
+                CRITICAL GEO RULE: Extract the 3-letter ISO Alpha-3 country code of the primary nation involved in the event (e.g., "USA", "ITA", "RUS", "UKR"). If it's a global event or unknown, use "GLO".
+                
+                Respond ONLY with a JSON in this exact format:
+                {{"aggression": [number from 0 to 10], "reasoning": "Brief 1-sentence tactical justification", "iso_country": "XXX"}}
+                """
+                try:
+                    client = genai.Client(api_key=key)
+                    response = client.models.generate_content(model='gemini-2.5-flash', contents=crisis_prompt)
+                    parsed = extract_json(response.text)
+                    if parsed:
+                        parsed['explanation'] = parsed.get('reasoning', 'No reasoning provided.')
+                        if parsed.get('aggression', 0) >= 7.0:
+                            parsed['has_fallacy'] = True
+                            parsed['fallacy_type'] = "High Crisis Alert"
+                        else:
+                            parsed['has_fallacy'] = False
+                    else:
+                        parsed = {"aggression": 0, "explanation": "Analysis failed.", "has_fallacy": False}
+                except Exception as e:
+                    parsed = {"aggression": 0, "explanation": f"API Error: {str(e)}", "has_fallacy": False}
+                
+                res.append(sanitize_response(parsed))
                 prog.progress((i + 1) / len(subset))
             
             final_df = pd.concat([subset.reset_index(drop=True), pd.DataFrame(res)], axis=1)
             st.session_state['data_store']['Radar']['analyzed'] = final_df
             st.rerun()
-
-    # --- STEP 3: DISPLAY RESULTS ---
+    
     analyzed_radar = st.session_state['data_store'].get('Radar', {}).get('analyzed')
     if analyzed_radar is not None:
         st.divider()
@@ -2804,48 +2923,165 @@ elif mode == t("5. Live Radar (RSS/Reddit)"):
         col_m2.metric(t("Flagged Issues"), len(analyzed_radar[analyzed_radar['has_fallacy']==True]))
         col_m3.metric(t("Monitored Items"), len(analyzed_radar))
         
-        if avg_aggression >= alert_threshold:
-            st.error(f"🚨 **{t('CRITICAL CRISIS ALERT')}:** {t('Threshold breached!')}")
-            if alert_webhook:
-                st.toast(t("Dispatching emergency alert..."), icon="🚨")
+        soglia = alert_threshold if 'alert_threshold' in locals() else 8.0
         
-        # --- GEO-INT MAP (Translated) ---
-        st.markdown("---")
-        st.subheader(t("Geopolitical Crisis Map"))
-        
-        # ... [Plotly Geo Map Logic wrapped in t() for titles] ...
+        if avg_aggression >= soglia:
+            st.error(f"🚨 **{t('CRITICAL CRISIS ALERT')}:** The current feed has exceeded the aggression threshold ({avg_aggression:.1f} >= {soglia}).")
+            if 'alert_webhook' in locals() and alert_webhook:
+                st.toast(t("Dispatching emergency alert to configured channels..."), icon="🚨")
+                st.success(f"📧 **Automated Alert Dispatched!** Sent payload to webhook at {datetime.now().strftime('%H:%M:%S')}")
+        elif avg_aggression >= (soglia - 2.0):
+            st.warning(f"⚠️ **ELEVATED TENSION:** The feed is showing signs of polarization and is approaching the alert threshold.")
+            
+        if 'iso_country' in analyzed_radar.columns:
+            st.markdown("---")
+            st.subheader(t("Geopolitical Crisis Map"))
+            map_data = analyzed_radar[~analyzed_radar['iso_country'].isin(['GLO', 'None', 'Unknown', ''])].copy()
+            if not map_data.empty:
+                geo_stats = map_data.groupby('iso_country').agg(News_Count=('iso_country', 'count'), Avg_Tension=('aggression', 'mean')).reset_index()
+                fig_map = px.scatter_geo(
+                    geo_stats, locations="iso_country", size="News_Count", color="Avg_Tension",
+                    hover_name="iso_country", projection="orthographic",
+                    color_continuous_scale=px.colors.sequential.Reds, range_color=(0, 10),
+                    title=t("God's Eye: Live Global Threat Sphere")
+                )
+                fig_map.update_layout(
+                    geo=dict(showframe=False, showcoastlines=True, showocean=True, oceancolor='rgba(10, 15, 30, 1)', lakecolor='rgba(10, 15, 30, 1)', landcolor='rgba(20, 25, 40, 1)', bgcolor='rgba(0,0,0,0)'),
+                    paper_bgcolor='rgba(0,0,0,0)', margin=dict(l=0, r=0, t=40, b=0)
+                )
+                st.plotly_chart(fig_map, use_container_width=True)
+            else:
+                st.caption(t("No specific geographical targets identified in the current feed."))
 
+        st.markdown("---")
         st.subheader(t("Live Feed Feedbacks"))
-        for idx, r in analyzed_radar.iterrows():
+        for idx, r in analyzed_radar.iterrows(): 
             with st.container(border=True):
-                st.caption(f"🕒 {r['timestamp']} | **Agg:** {r['aggression']}/10")
+                st.caption(f"🕒 {r['timestamp']} | [Source Link]({r['link']}) | **Agg:** {r['aggression']}/10")
                 st.write(r['content'][:300] + "...")
                 
-                if st.button(t("Deploy Web Spider"), key=f"spider_{idx}"):
+                spider_key = f"spider_{idx}"
+                if st.button(t("Deploy Web Spider"), key=spider_key, help=t("Crawls the source URL to map its infrastructure and outbound links.")):
                     with st.spinner(t("Crawling target infrastructure...")):
                         internal, external = run_web_spider(r['link'])
                         st.markdown(f"**{t('Infrastructure Mapped')}:**")
-                        # Display links...
+                        col_in, col_ex = st.columns(2)
+                        with col_in:
+                            st.caption(t("Internal Architecture"))
+                            for l in internal[:5]: st.write(f"- {l}")
+                        with col_ex:
+                            st.caption(t("External Outbound Affiliations"))
+                            for l in external[:5]: st.write(f"- {l}")
+                
+                if r['has_fallacy']:
+                    st.error(f"🛑 **{r['fallacy_type']}**: {r['explanation']}")
+                else:
+                    st.success(f"✅ {r.get('explanation', 'Clear.')}")
 
-        # --- EXPORT RADAR INTEL (Translated) ---
         st.divider()
         st.subheader(t("Export Radar Intel"))
+        export_df = analyzed_radar.drop(columns=['Select'], errors='ignore')
+        csv_data = export_df.to_csv(index=False).encode('utf-8')
+        
+        with st.spinner(t("Generating Threat PDF Report...")):
+            pdf_bytes_radar = generate_pdf_report(
+                analyzed_radar, 
+                summary_text=f"LIVE RADAR ALERT.\nFeed monitored: {feed_url}\nAverage Aggression Level: {avg_aggression:.1f}/10\nTotal items flagged for issues: {len(analyzed_radar[analyzed_radar['has_fallacy']==True])}"
+            ) 
+            
         c_btn1, c_btn2 = st.columns(2)
         with c_btn1:
-            st.download_button(t("Download Alert Report (CSV)"), data=csv_data, file_name="Radar.csv", type="primary")
+            st.download_button(label=t("Download Alert Report (CSV)"), data=csv_data, file_name=f"RAP_Radar_Alert_{datetime.now().strftime('%Y%m%d_%H%M')}.csv", mime="text/csv", type="primary")
         with c_btn2:
-            st.download_button(t("Download Threat Report (PDF)"), data=pdf_bytes_radar, file_name="Threats.pdf", type="primary")
+            st.download_button(label=t("Download Threat Report (PDF)"), data=pdf_bytes_radar, file_name=f"RAP_Radar_Threat_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf", mime="application/pdf", type="primary")
 
-    # --- LIVE SENTINEL MODE (AUTONOMOUS) ---
-    st.divider()
-    st.subheader(t("Live Sentinel Mode (Autonomous)"))
-    st.caption(t("System will continuously fetch and analyze alerts automatically via Webhook."))
+        st.divider()
+        st.subheader(t("Live Sentinel Mode (Autonomous)"))
+        st.caption(t("Leave this dashboard open. The system will continuously fetch, analyze, and dispatch alerts automatically via Webhook when new critical events occur."))
 
-    live_toggle = st.toggle(t("Activate Live Sentinel"), key="live_radar_toggle")
-    if live_toggle:
-        refresh_rate = st.slider(t("Scan Interval (Seconds)"), 15, 600, 60)
-        # Sentinel autonomous loop logic follows...
-        st.info(f"🟢 **{t('SENTINEL ACTIVE')}** | {t('Next scan in')} {refresh_rate}s")
+        c_live1, c_live2 = st.columns([1, 2])
+        with c_live1:
+            live_toggle = st.toggle(t("Activate Live Sentinel"), key="live_radar_toggle")
+        with c_live2:
+            if live_toggle: refresh_rate = st.slider(t("Scan Interval (Seconds)"), 15, 600, 60)
+
+        if live_toggle:
+            if not feed_url:
+                st.warning(t("Please enter a Keyword or Feed URL at the top first."))
+            else:
+                live_placeholder = st.empty()
+                with live_placeholder.container():
+                    st.info(f"🟢 **{t('SENTINEL ACTIVE')}** | Target: **{feed_url}** | Next scan in {refresh_rate}s")
+                    
+                    with st.spinner(t("Scanning for new events...")):
+                        user_input = feed_url.strip().lower()
+                        actual_url = feed_url.strip()
+                        news_shortcuts = {
+                            "ansa": "https://www.ansa.it/sito/ansait_rss.xml", "repubblica": "https://www.repubblica.it/rss/homepage/rss2.0.xml",
+                            "corriere": "http://xml2.corriereobjects.it/rss/homepage.xml", "bbc": "http://feeds.bbci.co.uk/news/world/rss.xml",
+                            "cnn": "http://rss.cnn.com/rss/edition.rss", "nytimes": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"
+                        }
+                        if user_input in news_shortcuts: actual_url = news_shortcuts[user_input]
+                        elif "reddit.com/r/" in user_input and not user_input.endswith(".rss"):
+                            if actual_url.endswith("/"): actual_url = actual_url[:-1]
+                            actual_url += "/new/.rss"
+                        elif not actual_url.startswith("http"):
+                            safe_query = actual_url.replace(" ", "%20")
+                            lang_map = {
+                                "English": "hl=en-US&gl=US&ceid=US:en", "Italiano": "hl=it&gl=IT&ceid=IT:it", "Español": "hl=es&gl=ES&ceid=ES:es"
+                            }
+                            region_params = lang_map.get(news_region if 'news_region' in locals() else "Italiano", "hl=it&gl=IT&ceid=IT:it")
+                            actual_url = f"https://news.google.com/rss/search?q={safe_query}&{region_params}"
+                            
+                        feed = feedparser.parse(actual_url)
+                        new_items = []
+                        for entry in feed.entries[:int(max_entries)]:
+                            link = entry.get('link', '')
+                            if link not in st.session_state['seen_radar_links']:
+                                clean_summary = re.sub(r'<[^>]+>', '', entry.get('summary', ''))
+                                new_items.append({'title': entry.get('title', ''), 'content': f"TITLE: {entry.get('title', '')}\nCONTENT: {clean_summary[:500]}", 'link': link})
+                        
+                        if new_items:
+                            st.warning(f"🚨 Intercepted {len(new_items)} new updates! Running Threat Analysis...")
+                            live_agg_scores = []
+                            for item in new_items:
+                                crisis_prompt = f"""
+                                You are an Early Warning Crisis AI. Evaluate the INHERENT CRISIS LEVEL of the EVENT.
+                                Scoring (0 to 10): 0-3 (Stable), 4-6 (Elevated), 7-8 (Critical), 9-10 (Extreme).
+                                News: "{item['content']}"
+                                CRITICAL LANGUAGE RULE: Write reasoning in {st.session_state['global_lang']}.
+                                Respond ONLY with a JSON: {{"aggression": [0-10], "reasoning": "Brief reason", "iso_country": "XXX"}}
+                                """
+                                try:
+                                    client = genai.Client(api_key=key)
+                                    response = client.models.generate_content(model='gemini-2.5-flash', contents=crisis_prompt)
+                                    parsed = extract_json(response.text)
+                                    score = parsed.get('aggression', 0) if parsed else 0
+                                except: score = 0
+                                live_agg_scores.append(score)
+                                st.session_state['seen_radar_links'].add(item['link'])
+                                
+                            avg_live_agg = sum(live_agg_scores) / len(live_agg_scores) if live_agg_scores else 0
+                            st.metric(t("New Items Crisis Index"), f"{avg_live_agg:.1f}/10")
+                            
+                            soglia = alert_threshold if 'alert_threshold' in locals() else 8.0
+                            if avg_live_agg >= soglia:
+                                st.error(f"🚨 ALERT THRESHOLD BREACHED ({avg_live_agg:.1f} >= {soglia})! DISPATCHING PAYLOAD...")
+                                if 'alert_webhook' in locals() and alert_webhook:
+                                    try:
+                                        payload = {"content": f"🚨 **RAP CRISIS ALERT** 🚨\n**Target:** {feed_url}\n**Crisis Level:** {avg_live_agg:.1f}/10\n**New Events Detected:** {len(new_items)}"}
+                                        requests.post(alert_webhook, json=payload, timeout=5)
+                                        st.success("✅ Webhook delivered successfully!")
+                                    except Exception as e: st.error(f"Failed to send Webhook: {e}")
+                            else: st.success("Tension is below threshold. No alert dispatched.")
+                        else:
+                            st.success(f"No new events detected since last scan. Standing by.")
+                            
+                    timer_ui = st.empty()
+                    for remaining in range(refresh_rate, 0, -1):
+                        timer_ui.info(f"**Radar in Standby.** Next autonomous sweep in: **{remaining}s**")
+                        time.sleep(1)
+                    st.rerun()
 
 # ==========================================
 # MODULE 6: DEEP DOCUMENT ORACLE (RAG)
@@ -2854,13 +3090,11 @@ elif mode == t("6. Deep Document Oracle (RAG)"):
     st.header(t("6. Deep Document Oracle"))
     st.caption(t("Upload massive PDFs (e.g., manifestos, contracts, books) and find contradictions and extract deep facts without traditional RAG limits."))
 
-    # API Key Handling
     if "GEMINI_API_KEY" in st.secrets: 
         key = st.secrets["GEMINI_API_KEY"]
     else: 
         key = st.text_input(t("API Key"), type="password")
 
-    # Translated File Uploader
     uploaded_files = st.file_uploader(t("Upload PDF Documents"), type="pdf", accept_multiple_files=True)
     
     if uploaded_files:
@@ -2878,7 +3112,7 @@ elif mode == t("6. Deep Document Oracle (RAG)"):
         if 'doc_full_text' in st.session_state and st.session_state['doc_full_text']:
             st.divider()
             
-            # --- PII SANITIZER (Translated UI) ---
+            # --- PII SANITIZER ---
             c_san1, c_san2 = st.columns([1, 3])
             with c_san1:
                 if st.button(t("Sanitize Document (Redact PII)"), help=t("Hides Emails, IPs, IBANs, and Phones before chatting with the Oracle")):
@@ -2887,7 +3121,6 @@ elif mode == t("6. Deep Document Oracle (RAG)"):
                         st.session_state['doc_full_text'] = clean_text
                         st.success(t("Document successfully sanitized (CIA Blackout Protocol)!"))
             
-            # --- DOWNLOAD REDACTED DOSSIER ---
             st.download_button(
                 label=t("Download Redacted Dossier (TXT)"),
                 data=st.session_state['doc_full_text'].encode('utf-8'),
@@ -2896,12 +3129,22 @@ elif mode == t("6. Deep Document Oracle (RAG)"):
                 type="primary"
             )
             
-            # --- KNOWLEDGE GRAPH (Translated UI) ---
+            # --- KNOWLEDGE GRAPH ---
             with st.expander(t("Extract Document Power Network (Knowledge Graph)"), expanded=False):
                 st.caption(t("Automatically scan the document to map relationships between People, Organizations, and Locations."))
                 if st.button(t("Generate Power Graph")):
                     with st.spinner(t("Extracting entities and relationships (this may take a minute)...")):
-                        graph_prompt = f"Analyze this document and extract the top 12 most important relationships between entities... [PROMPT TRUNCATED FOR BREVITY]"
+                        graph_prompt = f"""
+                        Analyze this document and extract the top 12 most important relationships between entities (People, Organizations, Locations).
+                        CRITICAL RULES:
+                        1. The "relation" field MUST BE ULTRA-SHORT (maximum 1 to 3 words, e.g., "CEO", "Owned by", "Funded", "Opposes").
+                        2. Keep entity names short and clean.
+                        Return ONLY a valid JSON format like this:
+                        {{ "relations": [ {{"source": "Entity 1", "target": "Entity 2", "relation": "Short Label"}} ] }}
+                        
+                        DOCUMENT:
+                        {st.session_state['doc_full_text'][:30000]}
+                        """
                         try:
                             client = genai.Client(api_key=key)
                             graph_res = client.models.generate_content(model='gemini-2.0-flash', contents=graph_prompt)
@@ -2909,22 +3152,35 @@ elif mode == t("6. Deep Document Oracle (RAG)"):
                             fig_doc = plot_document_entity_graph(graph_json)
                             if fig_doc:
                                 st.pyplot(fig_doc)
-                                # Global Memory Registration
                                 for rel in graph_json.get('relations', []):
                                     if rel.get('source'): st.session_state['global_entities'].add(str(rel['source']).strip().lower())
                                     if rel.get('target'): st.session_state['global_entities'].add(str(rel['target']).strip().lower())
                                 st.success(f"{t('Registered')} {len(st.session_state['global_entities'])} {t('entities into Global Memory.')}")
+                            else:
+                                st.error("Not enough clear relationships found to build a graph.")
                         except Exception as e:
                             st.error(f"{t('Graph Extraction Error')}: {str(e)}")
 
             st.divider()
 
-            # --- CONTRADICTION SCANNER (Translated UI) ---
+            # --- CONTRADICTION & LOOPHOLE SCANNER ---
             with st.expander(t("Deep Scan: Contradictions & Loopholes"), expanded=False):
                 st.caption(t("Force the AI to audit the entire document specifically looking for logical contradictions, legal loopholes, or unfulfilled claims."))
                 if st.button(t("Run Audit Scan"), type="primary"):
                     with st.spinner(t("Auditing document for contradictions...")):
-                        audit_prompt = f"You are a ruthless Forensic Auditor... [PROMPT TRUNCATED]"
+                        audit_prompt = f"""
+                        You are a ruthless Forensic Auditor and Legal Analyst.
+                        Scan the following document specifically for:
+                        1. Internal Contradictions (e.g., Chapter 1 says X, Chapter 4 says the opposite of X).
+                        2. Loopholes or ambiguous clauses that could be exploited.
+                        3. Hidden risks or highly controversial statements.
+                        
+                        CRITICAL RULE: For every point you make, you MUST cite the [PAGE X] reference. 
+                        CRITICAL LANGUAGE RULE: Write the ENTIRE report strictly in {st.session_state['global_lang']}.
+                        
+                        DOCUMENT TEXT:
+                        {st.session_state['doc_full_text'][:35000]}
+                        """
                         try:
                             client = genai.Client(api_key=key)
                             audit_res = client.models.generate_content(model='gemini-2.0-flash', contents=audit_prompt)
@@ -2934,7 +3190,7 @@ elif mode == t("6. Deep Document Oracle (RAG)"):
                         except Exception as e:
                             st.error(f"{t('Audit Error')}: {str(e)}")
 
-            # --- MULTi-AGENT DEBATE (Translated UI) ---
+            # --- MULTI-AGENT DEBATE (RED TEAM vs BLUE TEAM) ---
             with st.expander(t("Multi-Agent War Room (Stress Test)"), expanded=False):
                 st.caption(t("Deploy two opposing AI agents to debate the document. The Red Team attacks it, the Blue Team defends it."))
                 debate_topic = st.text_input(t("Debate Focus (e.g., 'Security flaws', 'Ethical implications'):"), placeholder=t("What should the agents fight about?"))
@@ -2944,12 +3200,31 @@ elif mode == t("6. Deep Document Oracle (RAG)"):
                         st.warning(t("Please enter a debate focus."))
                     else:
                         st.markdown(f"### 🔴 {t('Red Team')} vs 🔵 {t('Blue Team')}: *{debate_topic}*")
-                        # Agent logic follows...
-                        # [Keep the existing debate logic but wrap UI strings in t()]
+                        
+                        # AGENT 1: RED TEAM
+                        with st.spinner(t("🔴 Red Team is analyzing vulnerabilities...")):
+                            red_prompt = f"You are the RED TEAM (Aggressive Attacker). Criticize this document focusing on: '{debate_topic}'. Find flaws, risks, and weaknesses. Be ruthless. Use maximum 150 words.\n\nCRITICAL LANGUAGE RULE: You MUST write your ENTIRE response strictly in {st.session_state['global_lang']}.\n\nDOCUMENT: {st.session_state['doc_full_text'][:20000]}"
+                            client = genai.Client(api_key=key)
+                            red_res = client.models.generate_content(model='gemini-2.5-flash', contents=red_prompt).text
+                            st.error(f"**🔴 {t('Red Team Attack')}:**\n{red_res}")
+                        
+                        # AGENT 2: BLUE TEAM
+                        with st.spinner(t("🔵 Blue Team is formulating a defense...")):
+                            blue_prompt = f"You are the BLUE TEAM (Steadfast Defender). Read the RED TEAM's attack below regarding the document. Counter their arguments based on the text. Minimize risks and defend the document. Use maximum 150 words.\n\nCRITICAL LANGUAGE RULE: You MUST write your ENTIRE response strictly in {st.session_state['global_lang']}.\n\nRED TEAM ATTACK:\n{red_res}\n\nDOCUMENT: {st.session_state['doc_full_text'][:20000]}"
+                            blue_res = client.models.generate_content(model='gemini-2.5-flash', contents=blue_prompt).text
+                            st.info(f"**🔵 {t('Blue Team Defense')}:**\n{blue_res}")
+                            
+                        # AGENT 3: THE JUDGE
+                        with st.spinner(t("⚖️ The Judge is deliberating...")):
+                            judge_prompt = f"You are the IMPARTIAL JUDGE. Read the debate between Red and Blue. Who won? Provide a final 2-sentence verdict on the actual risk level of the document regarding '{debate_topic}'.\n\nCRITICAL LANGUAGE RULE: You MUST write your ENTIRE response strictly in {st.session_state['global_lang']}.\n\nRED:\n{red_res}\n\nBLUE:\n{blue_res}"
+                            judge_res = client.models.generate_content(model='gemini-2.5-flash', contents=judge_prompt).text
+                            st.success(f"**⚖️ {t('Final Verdict')}:**\n{judge_res}")
+                            
+                        st.session_state.doc_oracle_history.append({"role": "assistant", "content": f"**[WAR ROOM DEBATE: {debate_topic}]**\n\n**🔴 RED:** {red_res}\n\n**🔵 BLUE:** {blue_res}\n\n**⚖️ JUDGE:** {judge_res}"})
 
             st.divider()
 
-            # --- THE ORACLE CHAT (UPGRADED: HIGH-PRECISION SCAN) ---
+            # --- THE ORACLE CHAT ---
             st.subheader(t("Chat with the Oracle"))
             
             for message in st.session_state.doc_oracle_history:
@@ -2973,13 +3248,23 @@ elif mode == t("6. Deep Document Oracle (RAG)"):
                         scored_chunks.sort(key=lambda x: x[0], reverse=True)
                         top_context = "\n\n[SEGMENT]\n\n".join([text for score, text in scored_chunks[:4]])
                         
-                        rag_prompt = f"Answer the query using ONLY these segments: {top_context}\nQuery: {prompt}"
+                        rag_prompt = f"""
+                        You are the Deep Document Oracle. Answer the user query using ONLY the following extracted document segments.
+                        If the answer is not in the segments, say so.
+                        CRITICAL LANGUAGE RULE: You MUST write your ENTIRE response strictly in {st.session_state['global_lang']}.
+                        
+                        SEGMENTS:
+                        {top_context}
+                        
+                        USER QUERY: {prompt}
+                        """
                         
                         try:
                             client = genai.Client(api_key=key)
                             response = client.models.generate_content(model='gemini-2.0-flash', contents=rag_prompt).text
                             final_response = f"*({t('Method: High-Precision Context Scan')})*\n\n{response}"
                         except Exception as e:
+                            # Fallback if precision scan fails
                             response = ask_document_oracle(st.session_state['doc_full_text'], prompt, key)
                             final_response = response
 
