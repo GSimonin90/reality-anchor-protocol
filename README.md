@@ -51,7 +51,7 @@ We have developed a real-time web interface to interact with the models and visu
 The core system for monitoring and deconstructing digital narratives and identifying threats.
 
 * **Universal Translator & Global Multilingual Processing**: Native support for processing unstructured input text in any language (including slang, dialects, and non-Latin alphabets). An invisible background translation engine displays the original text alongside a direct translation in any of the 14 globally selected target languages.
-* **Universal Import**: Supports data ingestion via CSV (for Facebook, X, Instagram, TikTok), raw text paste, native YouTube URL scraping, direct Telegram JSON dump decryption, and Native Reddit OSINT extraction.
+* **Universal Import & Operation ECHELON**: Supports data ingestion via CSV, raw text paste, native YouTube URL scraping, direct Telegram JSON dump decryption, Native Reddit OSINT extraction, and **Echelon Universal Scraping** (infiltrates and extracts clean text from any public blog, article, or forum URL).
 * **Dark Triad Psychological Profiling**: Deep behavioral analysis of specific agents to quantify and visualize their levels of Narcissism, Machiavellianism, and Psychopathy using interactive Radar Charts.
 * **Adaptive Personas**: Selection of different analytical profiles to examine data through specific lenses: Strategic Intelligence Analyst, Mass Psychologist, Legal Consultant, Campaign Manager, or Custom Roles.
 * **Action Deck Generator**: Automated drafting of response strategies based on selected comments, including Counter-Narrative Threads, Official Statements, Legal Risk Assessments, and Engagement Strategies.
@@ -59,7 +59,15 @@ The core system for monitoring and deconstructing digital narratives and identif
 * **High-Value Targets (HVT) Identification**: Algorithmic detection of "Patient Zero" or chief propagandists based on toxicity, logical fallacies, and network impact/likes.
 * **Cross-Entity Resolution (Global Memory Check)**: Automatic cross-referencing that triggers an alert if actors or targets found in social data match classified entities extracted by the Deep Document Oracle.
 * **Dynamic Timeline Filter**: Interactive, minute-by-minute visualization of aggression peaks and narrative escalation over time.
-* **The Oracle**: A direct chat interface with the dataset for targeted queries regarding hate distribution, persuasive arguments, or identification of key actors.
+* **Operation OVERLORD (Audio Briefing TTS)**: The Skynet Multi-Agent Strategy Council automatically synthesizes its final containment protocol into a secure, playable audio briefing using advanced Text-to-Speech (TTS).
+
+### Panopticon (Global Threat Database)
+Central persistent intelligence hub for tracking, mapping, and investigating High-Value Targets (HVT).
+
+* **Persistent HVT Watchlist**: An SQLite-backed database that securely stores identified threats, their risk scores, and classifications across sessions.
+* **Operation SYNDICATE (Target Network Mapping)**: Generates an interactive, physics-based 3D network graph that clusters targets around threat typologies to visually expose bot networks, troll farms, and coordinated operational cells.
+* **Operation WATCHER (Autonomous OSINT Agent)**: Deploys an AI agent equipped with live internet access (Google Search grounding) to autonomously scour the surface web and compile real-time, up-to-date intelligence dossiers on any target entity.
+* **Operation BLACK-BOX (Encrypted Export Protocol)**: Military-grade OPSEC export feature that packages the classified target database into an AES-256 encrypted ZIP archive, protected by a dynamically generated, session-specific decryption key.
 
 ### Comparison Test (A/B Testing)
 Comparative analysis to map divergences in digital narratives.
@@ -79,6 +87,7 @@ A simulation environment for studying the spread of information and disinformati
 ### Cognitive Editor and Forensics (Multimodal)
 Advanced tools for multimedia content analysis, OSINT, and integrity verification.
 
+* **Operation ECLIPSE (Steganography & Covert Comms)**: Inject and extract highly classified, encrypted text payloads directly within the pixel data (LSB) of an image without altering its visual appearance.
 * **Ghost Reader (Forensic OCR)**: Optical Character Recognition that extracts hidden text from signs, documents, and screens within media, automatically translating it and formatting it cleanly alongside the original text.
 * **OPSEC Face Anonymization (Dual-Sweep Protocol)**: Advanced offline biometric redaction using an exhaustive dual-sweep (frontal and profile) algorithm with precise anti-overlap logic to safely blur and protect human identities before AI analysis.
 * **Vision Guard and Deepfake Scanner**: Analysis of images and videos for detecting digital manipulation, AI generation, and physical impossibilities (temporal morphing, kinematics, clipping).
@@ -100,8 +109,9 @@ Real-time interception of escalating disinformation and cyber threats.
 Massive analysis of complex textual documents and intelligence reports.
 
 * **Deep Document Analysis**: Processing of massive PDF files (manifestos, contracts, books) utilizing an extended context window for logical scanning and fact extraction.
+* **Operation INTERROGATOR (Two-Way Voice Command)**: A secure voice channel allowing operators to interrogate classified documents via microphone. The AI transcribes the query, searches the document, and replies via synthesized Text-to-Speech (TTS) audio.
 * **Project Spiderweb (Knowledge Graph)**: Automatic generation of interactive, draggable entity networks mapping the hidden financial, political, and social connections between people and organizations.
-* **Operation Blackout (CIA-Style Redaction)**: Advanced sanitization that replaces sensitive PII data (Emails, IPs, IBANs, Phones) with classified-style solid black blocks (██████), allowing users to download the fully redacted text dossier.
+* **Operation Blackout (CIA-Style Redaction)**: Advanced sanitization that replaces sensitive PII data (Emails, IPs, IBANs, Phones) with classified-style solid black blocks (██████), unlocking the ability to securely download the fully redacted text dossier.
 * **Contradiction & Loophole Scanner**: A ruthless forensic audit that scans entire documents to find internal contradictions, legal loopholes, and unfulfilled claims, complete with exact page citations.
 * **Multi-Agent War Room (Stress Test)**: Deployment of two opposing AI agents (Red Team Attacker vs. Blue Team Defender) to debate the document's flaws, overseen by an impartial AI Judge.
 * **Chrono-Intelligence**: Automatic extraction and plotting of every chronological event, date, and deadline into a clear historical timeline.
@@ -111,10 +121,9 @@ Universal output tools for the production of strategic intelligence.
 
 * **Hybrid Truth Engine**: Powered by Google Gemini models, performing three-level scans focused on logical validity, factual accuracy, and emotional spectrum.
 * **Bot Hunter & Stylometry**: Heuristic detection of coordinated inauthentic behavior, duplicate content propagation, and stylometric AI scanning to catch "Sockpuppets" operated by the same user.
-* **Universal PDF Reporting**: Generation of professional, formatted PDF executive summaries and tactical dossiers from *every single module*, ready for international teams.
+* **Universal PDF & PPTX Reporting**: Generation of professional, formatted PDF executive summaries and Corporate PowerPoint (PPTX) tactical dossiers from *every single module*, ready for international teams.
 * **Forensic Chain of Custody**: Generation of detailed TXT Forensic Dossiers for multimedia files, secured with SHA-256 cryptographic hashing to ensure legal evidence integrity.
 * **Excel Data Export**: Downloadable Excel reports containing executive summaries, fallacy distribution charts, and full raw datasets.
-
 ### How to Run Locally
 
     # 1. Install dependencies
@@ -141,6 +150,7 @@ Universal output tools for the production of strategic intelligence.
 ## Contributing
 
 This is an experimental research project. We welcome forks, pull requests, and alternative modeling approaches to challenge our parameters.
+
 
 
 
