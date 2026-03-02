@@ -18,3 +18,9 @@ networkx
 plotly
 opencv-python-headless
 requests
+python-pptx
+streamlit_agraph
+beautifulsoup4
+gTTS
+pyzipper
+stegano
