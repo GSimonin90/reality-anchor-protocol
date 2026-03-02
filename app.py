@@ -34,6 +34,14 @@ import urllib.parse
 from cv2 import GaussianBlur
 import requests
 import sqlite3
+from pptx import Presentation
+from pptx.util import Inches
+from streamlit_agraph import agraph, Node, Edge, Config
+from bs4 import BeautifulSoup
+from gtts import gTTS
+import pyzipper
+import string
+from stegano import lsb
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -41,6 +49,55 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+st.markdown("""
+<style>
+    /* Import monospace terminal font strictly for metrics/numbers */
+    @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;700&display=swap');
+
+    /* Style for main headers (Neon Blue Glow, normal spacing and casing) */
+    h1, h2, h3 {
+        color: #38BDF8 !important;
+        text-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+    }
+
+    /* Button Hover Effect: Add neon glow */
+    .stButton > button[data-baseweb="button"]:hover {
+        box-shadow: 0 0 15px rgba(56, 189, 248, 0.6);
+    }
+
+    /* Style for metrics (Hacker Green + Monospace Font for numbers) */
+    [data-testid="stMetricValue"] {
+        font-family: 'Fira Code', monospace !important;
+        color: #10B981 !important;
+        font-weight: 700;
+        text-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+    }
+
+    /* Pulsing animation for Error Alerts (🚨) - Kept red for true emergencies */
+    @keyframes pulse-red {
+        0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+    }
+    [data-testid="stAlert"]:has(.st-emotion-cache-121s1zy) /* Targets error alerts */ {
+        animation: pulse-red 2s infinite;
+        border-left: 5px solid #EF4444;
+    }
+
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #0A0E17; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #38BDF8; }
+
+    /* Neon borders for containers */
+    [data-testid="stContainer"] {
+        border: 1px solid #1E293B;
+        box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
+    }
+</style>
+""", unsafe_allow_html=True)
+
 
 # --- SESSION STATE INITIALIZATION ---
 if 'api_calls' not in st.session_state: st.session_state['api_calls'] = 0
@@ -55,6 +112,7 @@ if 'data_store' not in st.session_state:
     st.session_state['data_store'] = {
         'CSV File Upload': {'df': None, 'analyzed': None, 'summary': None},
         'YouTube Link': {'df': None, 'analyzed': None, 'summary': None},
+        'Universal URL': {'df': None, 'analyzed': None, 'summary': None},
         'Raw Text Paste': {'df': None, 'analyzed': None, 'summary': None},
         'Telegram Dump (JSON)': {'df': None, 'analyzed': None, 'summary': None},
         'Reddit Native (OSINT)': {'df': None, 'analyzed': None, 'summary': None},
@@ -756,6 +814,79 @@ def generate_pdf_report(df, summary_text=None):
         os.unlink(chart_path)
     return bytes(pdf.output())
 
+# --- HELPER: PPTX GENERATOR (CORPORATE UPGRADE) ---
+def generate_pptx_report(df, summary_text=None):
+    """
+    Generates a corporate-ready PowerPoint presentation containing
+    the Executive Briefing, key metrics, and visual charts.
+    """
+    prs = Presentation()
+    
+    # 1. Title Slide
+    title_slide_layout = prs.slide_layouts[0]
+    slide = prs.slides.add_slide(title_slide_layout)
+    title = slide.shapes.title
+    subtitle = slide.placeholders[1]
+    title.text = "RAP: Tactical Intelligence Briefing"
+    subtitle.text = f"Automated Threat Analysis\nGenerated on: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+    # 2. Executive Summary Slide
+    if summary_text:
+        bullet_slide_layout = prs.slide_layouts[1]
+        slide = prs.slides.add_slide(bullet_slide_layout)
+        shapes = slide.shapes
+        title_shape = shapes.title
+        body_shape = shapes.placeholders[1]
+        
+        title_shape.text = "Executive Briefing"
+        tf = body_shape.text_frame
+        # Clean the text for PPTX format
+        clean_summ = summary_text.encode('latin-1', 'replace').decode('latin-1')
+        tf.text = clean_summ
+
+    # 3. Key Metrics Slide
+    bullet_slide_layout = prs.slide_layouts[1]
+    slide = prs.slides.add_slide(bullet_slide_layout)
+    shapes = slide.shapes
+    title_shape = shapes.title
+    body_shape = shapes.placeholders[1]
+    
+    title_shape.text = "Key Threat Metrics"
+    tf = body_shape.text_frame
+    
+    total_items = len(df)
+    flagged = len(df[df['has_fallacy'] == True])
+    avg_agg = df['aggression'].mean() if 'aggression' in df.columns else 0
+    
+    tf.text = f"Total Entities Analyzed: {total_items}"
+    p = tf.add_paragraph()
+    p.text = f"Critical Issues Flagged: {flagged}"
+    p = tf.add_paragraph()
+    p.text = f"Average Aggression Level: {avg_agg:.1f} / 10"
+
+    # 4. Chart Slide (Reusing the fallback chart generator)
+    chart_path = create_fallback_chart(df)
+    if chart_path:
+        blank_slide_layout = prs.slide_layouts[5] # Title only layout
+        slide = prs.slides.add_slide(blank_slide_layout)
+        slide.shapes.title.text = "Threat Distribution"
+        
+        # Insert image centered
+        left = Inches(1)
+        top = Inches(2)
+        height = Inches(4.5)
+        slide.shapes.add_picture(chart_path, left, top, height=height)
+        
+        # Cleanup temporary image
+        import os
+        os.unlink(chart_path)
+
+    # Save to binary stream for Streamlit download
+    pptx_stream = io.BytesIO()
+    prs.save(pptx_stream)
+    pptx_stream.seek(0)
+    return pptx_stream.getvalue()
+
 # --- HELPER: PDF EXTRACTOR & SCRAPERS ---
 @st.cache_data
 def extract_text_from_pdf(file_obj):
@@ -889,6 +1020,69 @@ def scrape_telegram_live(channel_url, limit=30):
         return pd.DataFrame(data)
     except Exception as e: 
         st.error(f"Scraper Error: {str(e)}")
+        return None
+
+# --- HELPER: ECHELON WEB SCRAPER ---
+def scrape_universal_url(url):
+    """
+    V3: Focused on density and sequential integrity.
+    Prevents word collapsing and ensures clean, numbered nodes.
+    """
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Aggressive cleaning: remove UI noise
+        for noise in soup(["script", "style", "nav", "header", "footer", "aside", "form"]):
+            noise.decompose()
+
+        # Target only the main content containers to avoid menu items
+        main_content = soup.find_all(['p', 'article'])
+        extracted_data = []
+        node_counter = 1 # Reset counter for sequential numbering
+        
+        for p in main_content:
+            # Use space separator to prevent collapsing
+            text = p.get_text(separator=' ', strip=True)
+            # Remove artifacts like Wikipedia citations [1][2] or multiple spaces
+            text = re.sub(r'\[\d+\]', '', text) 
+            text = re.sub(r'\s+', ' ', text)
+            
+            # Focus only on high-density text (long paragraphs)
+            if len(text) > 100: 
+                extracted_data.append({
+                    'agent_id': f"NODE_{node_counter:02d}", # Clean sequential naming (NODE_01, NODE_02...)
+                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    'content': text,
+                    'likes': 0,
+                    'is_bot': False
+                })
+                node_counter += 1
+        
+        if not extracted_data:
+            # Emergency fallback: extract all body text and split into clean blocks
+            body_text = soup.get_text(separator=' ', strip=True)
+            body_text = re.sub(r'\s+', ' ', body_text)
+            chunks = [body_text[i:i+800] for i in range(0, len(body_text), 800)]
+            for i, chunk in enumerate(chunks):
+                if len(chunk) > 60:
+                    extracted_data.append({
+                        'agent_id': f"FALLBACK_{i+1:02d}",
+                        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        'content': chunk.strip(),
+                        'likes': 0,
+                        'is_bot': False
+                    })
+                    
+        return pd.DataFrame(extracted_data)
+    
+    except Exception as e:
+        st.error(f"Echelon Scraper Error: {str(e)}")
         return None
 
 # --- HELPER: RAW PASTE PARSER ---
@@ -1496,8 +1690,9 @@ elif mode == t("2. Social Data Analysis (Universal)"):
     
     with col_impostazioni_1:
         st.subheader(t("Data Input"))
-        input_method = st.radio(t("Input Method:"), 
-            [t("CSV File Upload"), t("YouTube Link"), t("Raw Text Paste"), t("Telegram Dump (JSON)"), t("Reddit Native (OSINT)")], 
+        # Echelon Upgrade: Universal URL added alongside all existing modules
+        input_method = st.radio("Input Method:", 
+            ["CSV File Upload", "YouTube Link", "Universal URL", "Raw Text Paste", "Telegram Dump (JSON)", "Reddit Native (OSINT)"], 
             horizontal=False
         )
         
@@ -1565,6 +1760,24 @@ elif mode == t("2. Social Data Analysis (Universal)"):
                         st.success("Scraped!")
                     else: st.error("Failed.")
 
+    elif input_method == "Universal URL":
+        # --- ECHELON WEB SCRAPER ---
+        url_input = st.text_input("Target URL (Blog, Article, Forum)", placeholder="https://...")
+        if st.button("Deploy Echelon Scraper", type="primary"):
+            if not url_input:
+                st.warning("Provide a valid URL coordinate.")
+            else:
+                with st.spinner("Infiltrating target URL and extracting content..."):
+                    df_echelon = scrape_universal_url(url_input)
+                    if df_echelon is not None and not df_echelon.empty:
+                        df_echelon = detect_bot_activity(df_echelon)
+                        st.session_state['data_store'][input_method]['df'] = df_echelon
+                        st.session_state['data_store'][input_method]['analyzed'] = None
+                        st.session_state['data_store'][input_method]['summary'] = None
+                        st.success(f"Intercepted {len(df_echelon)} data segments from target infrastructure.")
+                    else:
+                        st.warning("No readable text found at target URL.")
+
     elif input_method == "Raw Text Paste":
         with st.form("text_form"):
             raw_text = st.text_area("Paste content", height=150)
@@ -1581,7 +1794,6 @@ elif mode == t("2. Social Data Analysis (Universal)"):
     elif input_method == "Telegram Dump (JSON)":
         st.info("Chameleon Protocol: Live Infiltration or JSON Offline Dump.")
         with st.form("tg_form"):
-            # --- CHAMELEON: DUAL INPUT UI ---
             tg_url = st.text_input("1. LIVE: Enter Public Channel URL (e.g., t.me/rian_ru)", placeholder="Leaves no trace. Max 30 recent messages.")
             tg_file = st.file_uploader("2. OFFLINE: Upload Telegram Chat Export (JSON)", type="json")
             submitted = st.form_submit_button("Extract Intel", type="primary")
@@ -1589,14 +1801,11 @@ elif mode == t("2. Social Data Analysis (Universal)"):
             if submitted:
                 tg_df = None
                 with st.spinner("Infiltrating Telegram..."):
-                    # Priority 1: Live Scraping
                     if tg_url:
                         tg_df = scrape_telegram_live(tg_url)
-                    # Priority 2: Offline JSON parsing
                     elif tg_file:
                         tg_df = parse_telegram_json(tg_file)
                         
-                    # Process and store the data if extraction was successful
                     if tg_df is not None and not tg_df.empty:
                         tg_df = detect_bot_activity(tg_df)
                         st.session_state['data_store'][input_method]['df'] = tg_df
@@ -1624,9 +1833,9 @@ elif mode == t("2. Social Data Analysis (Universal)"):
                         st.success(f"Intercepted {len(rdf)} posts from r/{sub_input}!")
                     else:
                         st.error("Failed to extract data. Make sure the subreddit is public and spelled correctly.")
-
+                        
     df = st.session_state['data_store'][input_method]['df']
-    
+
     if df is not None:
         if isinstance(df, pd.DataFrame):
             def clean(t): return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', str(t))
@@ -1827,6 +2036,116 @@ elif mode == t("2. Social Data Analysis (Universal)"):
                             st.success(f"Profile Generated for: {selected_target}")
                             st.markdown(profile_res)
                 st.markdown("---")
+                # --- LEVEL 4: SKYNET (MULTI-AGENT STRATEGY COUNCIL) ---
+                st.subheader("Skynet: Multi-Agent Strategy Council")
+                st.caption("Deploy a council of specialized autonomous AI agents to analyze the current dataset from extreme perspectives and synthesize a master strategy.")
+                
+                if st.button("Convene the Strategy Council", type="primary"):
+                    with st.spinner("Initializing autonomous agents..."):
+                        # Prepare data payload (top 15 most aggressive or fallacious comments to save tokens)
+                        council_data = adf.sort_values(by='aggression', ascending=False).head(15)['content'].tolist()
+                        council_context = " | ".join(str(c) for c in council_data)
+                        
+                        st.markdown("### The Council is deliberating...")
+                        
+                        col_ag1, col_ag2, col_ag3 = st.columns(3)
+                        
+                        client = genai.Client(api_key=key)
+                        
+                        # Agent 1: Psychologist
+                        with col_ag1:
+                            st.info("**Agent Alpha: The Psychologist**")
+                            prompt_psy = f"You are an expert Mass Psychologist. Analyze these social media comments: '{council_context[:10000]}'. Identify the core emotional vulnerabilities, groupthink patterns, and psychological triggers being exploited. Keep it under 150 words. Language: {st.session_state['global_lang']}."
+                            try:
+                                res_psy = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_psy).text
+                                st.write(res_psy)
+                            except Exception as e:
+                                res_psy = f"Error: {e}"
+                                st.write(res_psy)
+
+                        # Agent 2: Cyber-Security & Risk
+                        with col_ag2:
+                            st.error("**Agent Beta: The Risk Assessor**")
+                            prompt_risk = f"You are a Corporate Legal and Cyber-Risk Assessor. Analyze these comments: '{council_context[:10000]}'. Identify legal liabilities, TOS violations, doxxing risks, or physical threat escalation vectors. Keep it under 150 words. Language: {st.session_state['global_lang']}."
+                            try:
+                                res_risk = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_risk).text
+                                st.write(res_risk)
+                            except Exception as e:
+                                res_risk = f"Error: {e}"
+                                st.write(res_risk)
+
+                        # Agent 3: Chaos/Red Team
+                        with col_ag3:
+                            st.warning("**Agent Gamma: The Chaos Actor**")
+                            prompt_chaos = f"You are a malicious Information Warfare Operative (Red Team). Read these comments: '{council_context[:10000]}'. How would you exploit this exact situation to maximize polarization, spread disinformation, and cause maximum reputational damage? Keep it under 150 words. Language: {st.session_state['global_lang']}."
+                            try:
+                                res_chaos = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_chaos).text
+                                st.write(res_chaos)
+                            except Exception as e:
+                                res_chaos = f"Error: {e}"
+                                st.write(res_chaos)
+
+                        # Agent 4: The Commander (Final Judge)
+                        st.markdown("---")
+                        st.success("**The Commander: Final Strategic Synthesis**")
+                        with st.spinner("The Commander is synthesizing the final protocol..."):
+                            prompt_cmd = f"""
+                            You are the Supreme Strategic Commander. Read the reports from your 3 advisors regarding a social media crisis.
+                            
+                            PSYCHOLOGIST:
+                            {res_psy}
+                            
+                            RISK ASSESSOR:
+                            {res_risk}
+                            
+                            CHAOS ACTOR (Enemy simulation):
+                            {res_chaos}
+                            
+                            TASK: Synthesize this intelligence into a 3-step 'Containment & Counter-Strike Protocol'. Be highly tactical, authoritative, and precise. Language: {st.session_state['global_lang']}.
+                            
+                            CRITICAL FORMATTING RULE: You MUST end your entire response EXACTLY with this signature, enforcing a hard line break between AUTHORITY and STATUS:
+                            
+                            AUTHORITY: Supreme Strategic Commander
+                            STATUS: Protocol Initiated. Execute with Precision.
+                            """
+                            
+                            try:
+                                res_cmd = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_cmd).text
+                                
+                                res_cmd = res_cmd.replace("AUTHORITY:", "\n\n**AUTHORITY:**")
+                                res_cmd = res_cmd.replace("STATUS:", "\n\n**STATUS:**")
+                                
+                                st.markdown(res_cmd)
+                                
+                                # --- TTS AUDIO BRIEFING ---
+                                with st.spinner("Generating secure audio briefing transmission..."):
+                                    try:
+                                        # Map Streamlit languages to gTTS language codes
+                                        lang_map_tts = {
+                                            "English": "en", "Italiano": "it", "Español": "es", "Français": "fr", 
+                                            "Deutsch": "de", "Português": "pt", "Русский (Russian)": "ru", 
+                                            "العربية (Arabic)": "ar", "中文 (Chinese)": "zh-cn", "日本語 (Japanese)": "ja", 
+                                            "한국어 (Korean)": "ko", "Türkçe (Turkish)": "tr"
+                                        }
+                                        tts_lang = lang_map_tts.get(st.session_state['global_lang'], 'en')
+                                        
+                                        # Clean markdown asterisks for better speech synthesis
+                                        clean_text_for_speech = res_cmd.replace('*', '').replace('#', '')
+                                        
+                                        tts = gTTS(text=clean_text_for_speech, lang=tts_lang, slow=False)
+                                        fp = io.BytesIO()
+                                        tts.write_to_fp(fp)
+                                        fp.seek(0)
+                                        
+                                        st.markdown("##### 🔊 Incoming Audio Transmission")
+                                        st.audio(fp, format='audio/mp3')
+                                    except Exception as e_tts:
+                                        st.caption(f"Audio generation skipped: {e_tts}")
+                                        
+                            except Exception as e:
+                                st.write(f"Error: {e}")
+                
+                st.markdown("---")
                 with st.expander("📊 Open Intelligence Visuals (Radar, Heatmap & Targets)", expanded=False):
                     c_vis1, c_vis2 = st.columns(2)
                     with c_vis1:
@@ -1924,7 +2243,7 @@ elif mode == t("2. Social Data Analysis (Universal)"):
                 
                 # --- SOCKPUPPET DETECTOR (STYLOMETRY) ---
                 st.markdown("---")
-                st.subheader("🎭 Sockpuppet & Troll Farm Detector")
+                st.subheader("Sockpuppet & Troll Farm Detector")
                 st.caption("Stylometric analysis: Identifies different Agent IDs that exhibit the exact same writing style, grammar flaws, and punctuation tics (indicating a single operator managing multiple fake accounts).")
                 
                 if st.button("Run Stylometric AI Scan", type="primary"):
@@ -2152,15 +2471,41 @@ elif mode == t("2. Social Data Analysis (Universal)"):
                             st.success(f"✅ {explanation}")
 
                 st.markdown("---")
-                c_down1, c_down2 = st.columns([1, 1])
+                # Updated layout to fit 3 export buttons
+                c_down1, c_down2, c_down3 = st.columns([1, 1, 1])
+                
                 with c_down1:
                     excel_data = generate_excel_report(adf, summary_text)
-                    st.download_button("Download Full Excel Report", excel_data, "RAP_Intelligence_Report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
+                    st.download_button(
+                        label="Download Full Excel", 
+                        data=excel_data, 
+                        file_name="RAP_Intelligence_Report.xlsx", 
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                        type="primary"
+                    )
                 with c_down2:
                     if st.button("Generate PDF Report", type="primary"):
-                        pdf_bytes = generate_pdf_report(adf, summary_text=summary_text) 
-                        st.download_button("Download PDF", pdf_bytes, "RAP_Executive_Report.pdf", "application/pdf", type="primary")
-                
+                        with st.spinner("Compiling PDF..."):
+                            pdf_bytes = generate_pdf_report(adf, summary_text=summary_text) 
+                        st.download_button(
+                            label="Download PDF", 
+                            data=pdf_bytes, 
+                            file_name="RAP_Executive_Report.pdf", 
+                            mime="application/pdf", 
+                            type="primary"
+                        )
+                with c_down3:
+                    if st.button("Generate PPTX Briefing", type="primary"):
+                        with st.spinner("Building Presentation Slides..."):
+                            pptx_bytes = generate_pptx_report(adf, summary_text=summary_text)
+                        st.download_button(
+                            label="Download PPTX", 
+                            data=pptx_bytes, 
+                            file_name="RAP_Tactical_Briefing.pptx", 
+                            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation", 
+                            type="primary"
+                        )
+
                 st.markdown("---")
                 st.subheader("The Oracle (Chat with Data)")
                 for message in st.session_state.oracle_history:
@@ -2302,6 +2647,64 @@ elif mode == t("3. Cognitive Editor (Text/Image/Audio/Video)"):
                     mime="image/png",
                     type="primary"
                 )
+                
+                # --- OPERATION ECLIPSE (STEGANOGRAPHY) ---
+                st.markdown("---")
+                st.markdown(f"#### {t('Operation ECLIPSE: Steganography')}")
+                st.caption(t("Covert Communications: Hide or Extract encrypted messages directly within the pixel data of this image."))
+                
+                c_steg1, c_steg2 = st.columns(2)
+                with c_steg1:
+                    secret_payload = st.text_input(t("Message to Hide"), placeholder=t("Enter covert payload..."))
+                    if st.button(t("Inject Payload"), type="primary"):
+                        if secret_payload:
+                            with st.spinner(t("Altering Least Significant Bits...")):
+                                try:
+                                    # Stegano requires a saved file or file-like object
+                                    temp_img_io = io.BytesIO()
+                                    original_img.save(temp_img_io, format='PNG')
+                                    temp_img_io.seek(0)
+                                    
+                                    secret_img = lsb.hide(temp_img_io, secret_payload)
+                                    
+                                    out_io = io.BytesIO()
+                                    secret_img.save(out_io, format='PNG')
+                                    out_bytes = out_io.getvalue()
+                                    
+                                    st.success(t("Payload injected successfully!"))
+                                    st.download_button(
+                                        label=t("Download Covert Image (PNG)"),
+                                        data=out_bytes,
+                                        file_name=f"RAP_Eclipse_{datetime.now().strftime('%Y%m%d')}.png",
+                                        mime="image/png",
+                                        type="primary"
+                                    )
+                                except Exception as e:
+                                    st.error(f"Injection failed: {e}")
+                        else:
+                            st.warning(t("Enter a message to inject."))
+                            
+                with c_steg2:
+                    st.write("") 
+                    st.write("") 
+                    if st.button(t("Scan for Hidden Payload"), type="primary"):
+                        with st.spinner(t("Scanning pixel matrices for LSB anomalies...")):
+                            try:
+                                temp_img_io = io.BytesIO()
+                                original_img.save(temp_img_io, format='PNG')
+                                temp_img_io.seek(0)
+                                
+                                revealed_text = lsb.reveal(temp_img_io)
+                                if revealed_text:
+                                    st.success(t("Covert Payload Extracted:"))
+                                    st.code(revealed_text)
+                                else:
+                                    st.info(t("No hidden steganographic payload detected in this image."))
+                            except IndexError:
+                                # Stegano throws IndexError if there is no hidden message
+                                st.info(t("No hidden steganographic payload detected in this image."))
+                            except Exception as e:
+                                st.error(f"Extraction error: {e}")
 
                 # --- ELA FORENSICS VISUALIZER ---
                 st.markdown(f"#### {t('Error Level Analysis (ELA)')}")
@@ -3107,6 +3510,7 @@ elif mode == t("6. Deep Document Oracle (RAG)"):
                         full_text += f"\n\n--- DOCUMENT: {f.name} ---\n\n{txt}"
                 
                 st.session_state['doc_full_text'] = full_text
+                st.session_state['doc_sanitized'] = False 
                 st.success(f"{t('Processed')} {len(full_text)} {t('characters across')} {len(uploaded_files)} {t('documents. The Oracle is ready.')}")
         
         if 'doc_full_text' in st.session_state and st.session_state['doc_full_text']:
@@ -3119,15 +3523,20 @@ elif mode == t("6. Deep Document Oracle (RAG)"):
                     with st.spinner(t("Sanitizing sensitive data...")):
                         clean_text = sanitize_pii(st.session_state['doc_full_text'])
                         st.session_state['doc_full_text'] = clean_text
+                        st.session_state['doc_sanitized'] = True 
                         st.success(t("Document successfully sanitized (CIA Blackout Protocol)!"))
             
-            st.download_button(
-                label=t("Download Redacted Dossier (TXT)"),
-                data=st.session_state['doc_full_text'].encode('utf-8'),
-                file_name=f"RAP_Classified_Redacted_{datetime.now().strftime('%Y%m%d')}.txt",
-                mime="text/plain",
-                type="primary"
-            )
+            with c_san2:
+                if st.session_state.get('doc_sanitized', False):
+                    st.download_button(
+                        label=t("Download Redacted Dossier (TXT)"),
+                        data=st.session_state['doc_full_text'].encode('utf-8'),
+                        file_name=f"RAP_Classified_Redacted_{datetime.now().strftime('%Y%m%d')}.txt",
+                        mime="text/plain",
+                        type="primary"
+                    )
+                else:
+                    st.warning(f"⚠️ {t('Sanitize the document first to unlock the secure download.')}")
             
             # --- KNOWLEDGE GRAPH ---
             with st.expander(t("Extract Document Power Network (Knowledge Graph)"), expanded=False):
@@ -3149,12 +3558,67 @@ elif mode == t("6. Deep Document Oracle (RAG)"):
                             client = genai.Client(api_key=key)
                             graph_res = client.models.generate_content(model='gemini-2.0-flash', contents=graph_prompt)
                             graph_json = extract_json(graph_res.text)
-                            fig_doc = plot_document_entity_graph(graph_json)
-                            if fig_doc:
-                                st.pyplot(fig_doc)
-                                for rel in graph_json.get('relations', []):
-                                    if rel.get('source'): st.session_state['global_entities'].add(str(rel['source']).strip().lower())
-                                    if rel.get('target'): st.session_state['global_entities'].add(str(rel['target']).strip().lower())
+                            
+                            if graph_json and 'relations' in graph_json:
+                                nodes = []
+                                edges = []
+                                added_nodes = set()
+                                
+                                for rel in graph_json['relations']:
+                                    src = str(rel.get('source', 'Unknown')).strip()
+                                    tgt = str(rel.get('target', 'Unknown')).strip()
+                                    link_label = str(rel.get('relation', 'Linked')).strip()
+                                    
+                                    if not src or not tgt: continue
+                                    
+                                    # Add Source Node (Neon Blue, Larger Text)
+                                    if src not in added_nodes:
+                                        nodes.append(Node(
+                                            id=src, label=src, size=25, 
+                                            color="#38BDF8", 
+                                            font={'color': '#FFFFFF', 'size': 16}
+                                        ))
+                                        added_nodes.add(src)
+                                        st.session_state['global_entities'].add(src.lower())
+                                        
+                                    # Add Target Node (Hacker Green, Larger Text)
+                                    if tgt not in added_nodes:
+                                        nodes.append(Node(
+                                            id=tgt, label=tgt, size=25, 
+                                            color="#10B981", 
+                                            font={'color': '#FFFFFF', 'size': 16}
+                                        ))
+                                        added_nodes.add(tgt)
+                                        st.session_state['global_entities'].add(tgt.lower())
+                                        
+                                    # Add Edge with High-Visibility Text
+                                    edges.append(Edge(
+                                        source=src, 
+                                        target=tgt, 
+                                        label=link_label, 
+                                        color="#475569", 
+                                        font={
+                                            'color': '#38BDF8',      # Neon Blue Text
+                                            'size': 15,              # Increased font size
+                                            'background': '#0A0E17', # Dark background to hide the line behind the text
+                                            'strokeWidth': 0         # Remove default stroke
+                                        }
+                                    ))
+
+                                # Configure the Physics Engine and UI
+                                config = Config(
+                                    width="100%", 
+                                    height=650,
+                                    directed=True, 
+                                    physics=True, 
+                                    hierarchical=False,
+                                    nodeHighlightBehavior=True,
+                                    highlightColor="#EF4444"
+                                )
+                                
+                                st.markdown(f"### {t('Interactive Power Network')}")
+                                agraph(nodes=nodes, edges=edges, config=config)
+                                
                                 st.success(f"{t('Registered')} {len(st.session_state['global_entities'])} {t('entities into Global Memory.')}")
                             else:
                                 st.error("Not enough clear relationships found to build a graph.")
@@ -3224,22 +3688,53 @@ elif mode == t("6. Deep Document Oracle (RAG)"):
 
             st.divider()
 
-            # --- THE ORACLE CHAT ---
+            # --- OPERATION INTERROGATOR (TWO-WAY VOICE COMMAND) ---
             st.subheader(t("Chat with the Oracle"))
             
             for message in st.session_state.doc_oracle_history:
                 with st.chat_message(message["role"]):
                     st.markdown(message["content"])
-                    
-            if prompt := st.chat_input(t("Ask the Deep Oracle...")):
-                st.session_state.doc_oracle_history.append({"role": "user", "content": prompt})
+            
+            st.markdown("---")
+            st.caption("**Operation INTERROGATOR:** Use your microphone or keyboard to securely interrogate the document.")
+            
+            # Dual Input: Audio or Text
+            audio_cmd = st.audio_input("Initialize Secure Voice Channel:")
+            prompt = st.chat_input(t("Ask the Deep Oracle..."))
+            
+            active_query = None
+            voice_used = False
+            
+            # Detect which input method was used
+            if prompt:
+                active_query = prompt
+            elif audio_cmd:
+                with st.spinner("Decrypting voice transmission..."):
+                    try:
+                        client = genai.Client(api_key=key)
+                        audio_part = types.Part.from_bytes(data=audio_cmd.getvalue(), mime_type="audio/wav")
+                        transcription_res = client.models.generate_content(
+                            model='gemini-2.0-flash',
+                            contents=[audio_part, "Transcribe this audio request accurately in the language it is spoken. Output ONLY the transcription, absolutely no other text."]
+                        )
+                        active_query = transcription_res.text.strip()
+                        voice_used = True
+                    except Exception as e:
+                        st.error(f"Voice recognition failed: {e}")
+
+            # Execute the query if either input fired
+            if active_query:
+                st.session_state.doc_oracle_history.append({"role": "user", "content": active_query})
                 with st.chat_message("user"):
-                    st.markdown(prompt)
+                    if voice_used:
+                        st.markdown(f"*{active_query}*")
+                    else:
+                        st.markdown(active_query)
                 
                 with st.chat_message("assistant"):
                     with st.spinner(t("Scouring massive document context...")):
                         chunks = chunk_document(st.session_state['doc_full_text'])
-                        query_words = prompt.lower().split()
+                        query_words = active_query.lower().split()
                         scored_chunks = []
                         for c in chunks:
                             score = sum(2 for word in query_words if word in c.lower())
@@ -3256,7 +3751,7 @@ elif mode == t("6. Deep Document Oracle (RAG)"):
                         SEGMENTS:
                         {top_context}
                         
-                        USER QUERY: {prompt}
+                        USER QUERY: {active_query}
                         """
                         
                         try:
@@ -3264,12 +3759,34 @@ elif mode == t("6. Deep Document Oracle (RAG)"):
                             response = client.models.generate_content(model='gemini-2.0-flash', contents=rag_prompt).text
                             final_response = f"*({t('Method: High-Precision Context Scan')})*\n\n{response}"
                         except Exception as e:
-                            # Fallback if precision scan fails
-                            response = ask_document_oracle(st.session_state['doc_full_text'], prompt, key)
+                            response = ask_document_oracle(st.session_state['doc_full_text'], active_query, key)
                             final_response = response
 
                         st.markdown(final_response)
                         st.session_state.doc_oracle_history.append({"role": "assistant", "content": final_response})
+                        
+                        # TTS Auto-Play if user used voice
+                        if voice_used:
+                            with st.spinner("Synthesizing voice response..."):
+                                try:
+                                    lang_map_tts = {
+                                        "English": "en", "Italiano": "it", "Español": "es", "Français": "fr", 
+                                        "Deutsch": "de", "Português": "pt", "Русский (Russian)": "ru", 
+                                        "العربية (Arabic)": "ar", "中文 (Chinese)": "zh-cn", "日本語 (Japanese)": "ja", 
+                                        "한국어 (Korean)": "ko", "Türkçe (Turkish)": "tr"
+                                    }
+                                    tts_lang = lang_map_tts.get(st.session_state['global_lang'], 'en')
+                                    # Clean the text from markdown bolding for the reader
+                                    clean_text = response.replace('*', '').replace('#', '')
+                                    # Limit to first 600 chars to avoid massive audio delays
+                                    tts = gTTS(text=clean_text, lang=tts_lang, slow=False) 
+                                    fp = io.BytesIO()
+                                    tts.write_to_fp(fp)
+                                    fp.seek(0)
+                                    # Play it right away
+                                    st.audio(fp, format='audio/mp3', autoplay=True)
+                                except Exception as e_tts:
+                                    st.caption(f"Audio response skipped: {e_tts}")
 
 # ==========================================
 # MODULE 7: PANOPTICON (HVT WATCHLIST)
@@ -3322,13 +3839,35 @@ elif mode == t("7. Panopticon (HVT Watchlist)"):
                 st.success(t("Database Updated Successfully!"))
         
         with col_btn2:
-            st.download_button(
-                label=t("Download Watchlist (CSV)"), 
-                data=edited_pan.to_csv(index=False).encode('utf-8'), 
-                file_name="RAP_Panopticon.csv", 
-                mime="text/csv",
-                type="primary"
-            )
+            st.markdown(f"**🔒 {t('Black-Box: Secure Export Protocol')}**")
+            
+            # Generate a persistent secure password for the session
+            if 'export_pwd' not in st.session_state:
+                st.session_state['export_pwd'] = ''.join(random.choices(string.ascii_uppercase + string.digits, k=12))
+            
+            # Prepare CSV data
+            csv_data = edited_pan.to_csv(index=False).encode('utf-8')
+            
+            # Create Encrypted ZIP in memory
+            zip_buffer = io.BytesIO()
+            with pyzipper.AESZipFile(zip_buffer, 'w', compression=pyzipper.ZIP_DEFLATED, encryption=pyzipper.WZ_AES) as zf:
+                zf.setpassword(st.session_state['export_pwd'].encode('utf-8'))
+                zf.writestr("RAP_Classified_Watchlist.csv", csv_data)
+            
+            c_down1, c_down2 = st.columns([1, 2])
+            with c_down1:
+                st.download_button(
+                    label=f"📥 {t('Download Encrypted ZIP')}", 
+                    data=zip_buffer.getvalue(), 
+                    file_name=f"RAP_BlackBox_{datetime.now().strftime('%Y%m%d_%H%M')}.zip", 
+                    mime="application/zip",
+                    type="primary"
+                )
+            with c_down2:
+                st.error(f"**{t('DECRYPTION KEY')}:** `{st.session_state['export_pwd']}`")
+                if st.button(t("Generate New Key"), key="regen_pwd"):
+                    st.session_state['export_pwd'] = ''.join(random.choices(string.ascii_uppercase + string.digits, k=12))
+                    st.rerun()
             
         st.markdown("---")
         st.subheader(t("Threat Intelligence Visuals"))
@@ -3353,7 +3892,151 @@ elif mode == t("7. Panopticon (HVT Watchlist)"):
                 hole=0.3
             )
             st.plotly_chart(fig_pie, use_container_width=True)
+        
+        st.markdown("---")
+        st.subheader("Syndicate: Target Network Mapping")
+        st.caption("Visualizes alliances and coordinated networks. Targets are clustered by classification to expose potential Troll Farms or coordinated operational cells.")
+
+        if st.button("Generate Syndicate Map", type="primary"):
+            with st.spinner("Mapping global threat networks..."):
+                nodes = []
+                edges = []
+                added_nodes = set()
+                
+                # 1. Create Hub Nodes for each Threat Type (Neon Blue Diamonds)
+                threat_types = df_panopticon['threat_type'].unique()
+                for tt in threat_types:
+                    tt_node_id = f"CLASS_{tt}"
+                    nodes.append(Node(
+                        id=tt_node_id, label=str(tt).upper(), size=35, 
+                        color="#38BDF8", symbolType="diamond", 
+                        font={'color': '#FFFFFF', 'size': 18, 'face': 'Fira Code'}
+                    ))
+                
+                # 2. Create Target Nodes and Link them to Hubs
+                for _, row in df_panopticon.iterrows():
+                    agent = str(row['agent_id'])
+                    score = float(row['risk_score'])
+                    t_type = str(row['threat_type'])
+                    tt_node_id = f"CLASS_{t_type}"
+                    
+                    if agent not in added_nodes:
+                        # Color scales with danger: Red (>80), Orange (>50), Green (<50)
+                        node_color = "#EF4444" if score > 80 else "#F97316" if score > 50 else "#10B981"
+                        # Size scales with threat score
+                        node_size = 15 + (score / 4)
+                        
+                        nodes.append(Node(
+                            id=agent, label=agent, size=node_size, 
+                            color=node_color, font={'color': '#E2E8F0', 'size': 12}
+                        ))
+                        added_nodes.add(agent)
+                        
+                        # Link Target to its Threat Hub
+                        edges.append(Edge(
+                            source=agent, target=tt_node_id, 
+                            color="rgba(71, 85, 105, 0.6)", # Subtle slate line
+                            width=1.5
+                        ))
+
+                if nodes and edges:
+                    # Physics configuration for a smooth, expanding cluster layout
+                    config = Config(
+                        width="100%", height=600, directed=False, physics=True, 
+                        hierarchical=False, nodeHighlightBehavior=True, 
+                        highlightColor="#FFFFFF"
+                    )
+                    agraph(nodes=nodes, edges=edges, config=config)
+                else:
+                    st.info("Not enough data in the Panopticon to build a network map. Analyze targets in Module 2 first.")
+        
+        # --- OSINT AUTO-ENRICHMENT (TARGET HUNTER) ---
+        st.markdown("---")
+        st.subheader("Hunter Module: OSINT Auto-Enrichment")
+        st.caption("Generate instant deep-web search vectors and infrastructure queries for known targets.")
+        
+        c_hunt1, c_hunt2 = st.columns([1, 2])
+        with c_hunt1:
+            target_to_hunt = st.selectbox("Select Target to Investigate:", df_panopticon['agent_id'].unique())
             
+        with c_hunt2:
+            if target_to_hunt:
+                # Clean the target name for safe URL encoding
+                safe_target = urllib.parse.quote(str(target_to_hunt))
+                
+                with st.expander(f"Deploy Search Vectors for: {target_to_hunt}", expanded=True):
+                    st.markdown("**1. Deep Web & Leaks (Google Dorks)**")
+                    st.markdown(f"- [Search for Leaked Documents (PDF/DOCX)](https://www.google.com/search?q=ext:pdf+OR+ext:docx+%22{safe_target}%22+%22confidential%22+OR+%22internal%22)")
+                    st.markdown(f"- [Search Open Directories](https://www.google.com/search?q=intitle:%22index+of%22+%22{safe_target}%22)")
+                    st.markdown(f"- [Search Pastebin Dumps](https://www.google.com/search?q=site:pastebin.com+%22{safe_target}%22)")
+                    
+                    st.markdown("**2. Social & Public Footprint**")
+                    st.markdown(f"- [LinkedIn Cross-Reference](https://www.google.com/search?q=site:linkedin.com/in+%22{safe_target}%22)")
+                    st.markdown(f"- [Twitter/X Advanced Search](https://twitter.com/search?q=%22{safe_target}%22&src=typed_query)")
+                    st.markdown(f"- [Reddit Mention Tracker](https://www.reddit.com/search/?q=%22{safe_target}%22)")
+                    
+                    st.markdown("**3. Infrastructure & Cyber Intel (If Target is a Domain/IP)**")
+                    st.markdown(f"- [Shodan (Exposed Ports & IoT)](https://www.shodan.io/search?query={safe_target})")
+                    st.markdown(f"- [Censys (Certificates & Hosts)](https://search.censys.io/search?resource=hosts&q={safe_target})")
+                    st.markdown(f"- [Wayback Machine (Deleted History)](https://web.archive.org/web/*/{safe_target}*)")
+            
+        # --- OPERATION WATCHER (AUTONOMOUS OSINT AGENT) ---
+        st.markdown("---")
+        st.subheader("Operation WATCHER: Autonomous OSINT Agent")
+        st.caption("Deploy an AI agent with live internet access to gather real-time intelligence, recent news, and digital footprint analysis on any target.")
+        
+        watcher_target = st.text_input("Enter Target for Live Reconnaissance:", placeholder="e.g., CyberCorp, John Doe, APT28")
+        
+        if st.button("Deploy Watcher Agent", type="primary"):
+            if not watcher_target:
+                st.warning("Please specify a target for the Watcher Agent.")
+            else:
+                with st.spinner(f"Agent deployed. Scouring the surface web for '{watcher_target}'..."):
+                    watcher_prompt = f"""
+                    You are "WATCHER", an elite autonomous OSINT agent. 
+                    Your mission is to gather the most up-to-date and critical intelligence on the following target: "{watcher_target}".
+                    
+                    Using your Google Search capabilities, find:
+                    1. Recent news, controversies, or legal issues.
+                    2. Known affiliations, aliases, or associated organizations.
+                    3. Digital footprint (social media presence, leaked data, known domains).
+                    
+                    CRITICAL RULE: Write your entire dossier strictly in {st.session_state['global_lang']}.
+                    Format the output as a highly tactical "Live OSINT Dossier" with bullet points. Cite your sources with URLs where possible.
+                    """
+                    try:
+                        client = genai.Client(api_key=key)
+                        # Enable real-time Google Search grounding
+                        config_tools = types.GenerateContentConfig(
+                            tools=[{"google_search": {}}]
+                        )
+                        watcher_res = client.models.generate_content(
+                            model='gemini-2.0-flash', 
+                            contents=watcher_prompt,
+                            config=config_tools
+                        )
+                        st.success(f"Live Dossier compiled for: {watcher_target}")
+                        
+                        # Display the intelligence report
+                        with st.container(border=True):
+                            st.markdown(watcher_res.text)
+                            
+                        # Add a quick button to save this entity to the Panopticon if not already there
+                        if watcher_target not in df_panopticon['agent_id'].values:
+                            st.info("Target is not in your Panopticon Watchlist. Would you like to log it?")
+                            # Using a form to avoid immediate rerun issues with nested buttons
+                            with st.form("add_watcher_target_form"):
+                                new_risk = st.slider("Assign Threat Score", 0, 100, 50)
+                                new_type = st.selectbox("Assign Classification", ["Unknown Entity", "High-Value Target", "Corporate Entity", "Cyber Threat"])
+                                if st.form_submit_button("Log Target to Database"):
+                                    save_to_panopticon(watcher_target, new_risk, new_type)
+                                    st.success(f"{watcher_target} added to persistent database. Reloading...")
+                                    time.sleep(1)
+                                    st.rerun()
+                                    
+                    except Exception as e:
+                        st.error(f"Watcher Agent encountered an error: {e}")
+
     else:
         # Translated empty state message
         st.info(f"🟢 **{t('The Panopticon is currently empty.')}**\n\n{t('Run analysis in the Social Data module. If the system detects entities with high toxicity and network impact, they will be automatically classified as High-Value Targets and permanently stored here.')}")
