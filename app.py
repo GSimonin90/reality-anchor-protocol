@@ -673,15 +673,11 @@ def generate_strategic_summary(df, api_key, context="", persona="Intelligence An
     prompt = f"""
     You are a {persona}. 
     CONTEXT TOPIC: "{context}"
-    Review data:
-    - Avg Aggression: {avg_agg:.1f}/10
-    - Trend: {trend_msg}
-    - Dominant Emotion: {top_emotion}
-    - Bot Activity: {bot_count} items.
-    - Fallacies: {fallacy_counts}
-    - Topics: {top_topics}
-    TASK: Write a "Executive Briefing" (max 150 words) from the perspective of a {persona}.
-    CRITICAL LANGUAGE RULE: Write in the SAME LANGUAGE as the "CONTEXT TOPIC".
+    DATA: Avg Aggression {avg_agg:.1f}/10, Trend {trend_msg}, Emotion {top_emotion}, Bots {bot_count}, Fallacies {fallacy_counts}.
+    
+    TASK: Write a strictly professional "Executive Briefing" (max 150 words). 
+    CRITICAL RULE: NO introductory phrases. Start directly with the analysis. 
+    CRITICAL RULE: Write strictly in the SAME LANGUAGE as the "CONTEXT TOPIC".
     """
     try:
         client = genai.Client(api_key=api_key)
@@ -1494,53 +1490,76 @@ if st.sidebar.button("Download Master PDF Dossier", type="primary", help="Compil
         pdf.cell(0, 10, f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | HQ: {st.session_state['hq_coords'][2]}", 0, 1, 'C')
         pdf.ln(10)
         
-        # 2. Section: Panopticon (High-Value Targets)
-        pdf.set_font("Helvetica", 'B', 14)
-        pdf.cell(0, 10, "[1] PANOPTICON WATCHLIST (High-Value Targets)", 0, 1)
-        pdf.set_font("Helvetica", '', 10)
+        # 2. Section: Panopticon (High-Value Targets) - SKIPPED IF EMPTY
         conn = sqlite3.connect('rap_panopticon.db')
         try:
             df_pan = pd.read_sql_query("SELECT * FROM targets ORDER BY risk_score DESC LIMIT 10", conn)
             if not df_pan.empty:
+                pdf.set_font("Helvetica", 'B', 14)
+                pdf.cell(0, 10, "[1] PANOPTICON WATCHLIST (High-Value Targets)", 0, 1)
+                pdf.set_font("Helvetica", '', 10)
                 for _, row in df_pan.iterrows():
                     pdf.cell(0, 6, f"- {row['agent_id']} | Class: {row['threat_type']} | Threat Score: {row['risk_score']:.1f}", 0, 1)
-            else:
-                pdf.cell(0, 6, "No targets currently tracked.", 0, 1)
+                pdf.ln(5)
         except: 
-            pdf.cell(0, 6, "Database unreachable.", 0, 1)
-        pdf.ln(5)
+            pass
 
-        # 3. Section: Active Tactical Operations
-        pdf.set_font("Helvetica", 'B', 14)
-        pdf.cell(0, 10, "[2] ACTIVE TACTICAL OPERATIONS (Session Memory)", 0, 1)
-        pdf.set_font("Helvetica", '', 10)
-        ops_found = False
-        
         # Map of session states to readable report names
         memory_map = {
             'wt_result': 'WATCHTOWER (Kinetic Tracking)',
             'cyclops_result': 'CYCLOPS (IoT Scan)',
             'daedalus_result': 'DAEDALUS (Honeypot Forge)',
             'goliath_result': 'GOLIATH (PsyOp Matrix)',
+            'kraken_result': 'KRAKEN (APT Attack Blueprint)',
             'lazarus_result': 'LAZARUS (FININT Report)',
+            'midas_result': 'MIDAS (Crypto-Forensics)',
             'mirage_result': 'MIRAGE (Synthetic Identity)',
+            'atlas_result': 'ATLAS (3D Geo-Intelligence)',
             'vulcan_result': 'VULCAN (Battlefield Forensics)',
             'hawkeye_result': 'HAWKEYE (AML Flow of Funds)',
-            'blacksite_result': 'BLACK SITE (Interrogation Confession)'
+            'blacksite_result': 'BLACK SITE (Interrogation Confession)',
+            'omni_result': 'OMNISCIENCE (Digital Footprint)',
+            'ids_result': 'SIGINT (Network Intrusion Detection)',
+            'pandora_result': 'PANDORA (Malware Reverse Engineering)',
+            'wendigo_result': 'WENDIGO (Autonomous Deep Web Agent)',
+            'doppel_result': 'DOPPELGÄNGER (Vishing Matrix)',
+            'mice_result': 'M.I.C.E. (HUMINT Recruitment Dossier)',
+            'prom_result': 'PROMETHEUS (Stylometric Match)',
+            'siren_result': 'SIREN (Phishing Payload)',
+            'echo_result': 'ECHO (Behavioral Clone)',
+            'cerb_result': 'CERBERUS (Dark Web Breach Scan)',
+            'ghost_result': 'GHOST (Corporate Dark Web Ransomware Scan)'
         }
         
+        ops_found = False
         for key_mem, op_name in memory_map.items():
             if st.session_state.get(key_mem):
                 ops_found = True
-                pdf.set_font("Helvetica", 'B', 11)
-                pdf.cell(0, 8, f"> {op_name}", 0, 1)
-                pdf.set_font("Helvetica", '', 9)
-                clean_txt = st.session_state[key_mem].encode('latin-1', 'replace').decode('latin-1')
-                # Truncate text to avoid breaking the PDF page limits
-                pdf.multi_cell(0, 5, clean_txt[:800] + ("..." if len(clean_txt) > 800 else ""))
-                pdf.ln(3)
+                
+                # Report Header
+                pdf.set_font("Helvetica", 'B', 12)
+                pdf.cell(0, 10, f"TACTICAL REPORT: {op_name.upper()}", 0, 1)
+                pdf.set_font("Helvetica", '', 10)
+                
+                # Fetch raw text
+                raw_txt = st.session_state[key_mem]
+                
+                # --- MARKDOWN SANITIZER ---
+                # Removes bold (**text**), italics (*text* not used as lists), and headers (###)
+                clean_txt = re.sub(r'\*\*(.*?)\*\*', r'\1', raw_txt) # Togli i grassetti
+                clean_txt = re.sub(r'__(.*?)__', r'\1', clean_txt) # Togli i sottolineati
+                clean_txt = re.sub(r'(?<!\w)\*(?!\s)(.*?)\*(?!\w)', r'\1', clean_txt) # Togli i corsivi
+                clean_txt = re.sub(r'#+\s*', '', clean_txt) # Togli gli hashtag dei titoli
+                
+                # Fix encoding per PDF (Latin-1)
+                clean_txt = clean_txt.encode('latin-1', 'replace').decode('latin-1')
+                
+                # Print the clean intelligence report
+                pdf.multi_cell(0, 5, clean_txt)
+                pdf.ln(8) # Extra space between different reports
                 
         if not ops_found:
+            pdf.set_font("Helvetica", 'I', 10)
             pdf.cell(0, 6, "No tactical operations executed in current session.", 0, 1)
 
         pdf_bytes_valhalla = bytes(pdf.output())
@@ -1637,12 +1656,17 @@ if mode == t("0. Command Center (The Bridge)"):
         with st.spinner(t("Synthesizing global threat data...")):
             briefing_prompt = f"""
             You are the AI Commander of the Reality Anchor Protocol.
-            Provide a highly tactical, 3-paragraph Situation Report (SITREP) based on these live metrics:
-            - Known Hostiles Tracked: {total_hvt}
-            - Critical Imminent Threats: {critical_hvt}
-            - Global Crisis/Aggression Index: {avg_crisis}/10
+            MISSION: Provide a concise Situation Report (SITREP) based on these metrics:
+            - Known Hostiles: {total_hvt}
+            - Critical Threats: {critical_hvt}
+            - Global Crisis Index: {avg_crisis}/10
             
-            Give a strategic recommendation on which module the user should operate next.
+            STRUCTURE:
+            1. Tactical Summary (1 paragraph).
+            2. Recommended Module for immediate operation.
+            
+            CRITICAL RULE: NEVER write "Certainly", "Here is your briefing" or any introductory text. 
+            Output the SITREP IMMEDIATELY.
             CRITICAL RULE: Write strictly in {st.session_state['global_lang']}.
             """
             try:
@@ -4050,6 +4074,9 @@ elif mode == t("5. Live Radar (RSS/Reddit)"):
     st.subheader(f"{t('Operation GHOST: Deep/Dark Web Ransomware Scanner')}")
     st.caption(t("Scan surface web indexes, pastebins, and threat intel feeds for ransomware group mentions, leaked corporate domains, or data dumps."))
     
+    if 'ghost_result' not in st.session_state: st.session_state['ghost_result'] = None
+    if 'ghost_target_mem' not in st.session_state: st.session_state['ghost_target_mem'] = ""
+    
     ghost_domain = st.text_input(t("Target Corporate Domain:"), placeholder=t("e.g., target-company.com"))
     
     if st.button(t("Initiate GHOST Protocol"), type="primary"):
@@ -4068,23 +4095,27 @@ elif mode == t("5. Live Radar (RSS/Reddit)"):
                 3. Threat Actor Attribution (if any group claimed the attack).
                 4. Recommended Defensive Posture.
                 
-                CRITICAL RULE: Write your entire response strictly in {st.session_state['global_lang']}.
+                CRITICAL RULE: NEVER write "I will scan" or meta-commentary. Output the "Corporate Compromise Report" IMMEDIATELY. Write strictly in {st.session_state['global_lang']}.
                 """
                 try:
                     client = genai.Client(api_key=key)
                     config_tools = types.GenerateContentConfig(tools=[{"google_search": {}}])
-                    res_ghost = client.models.generate_content(
-                        model='gemini-2.0-flash', 
-                        contents=ghost_prompt,
-                        config=config_tools
-                    )
-                    st.error(f"GHOST Scan Complete for: {ghost_domain}")
-                    with st.container(border=True):
-                        st.markdown(res_ghost.text)
+                    res_ghost = client.models.generate_content(model='gemini-2.0-flash', contents=ghost_prompt, config=config_tools)
+                    
+                    st.session_state['ghost_result'] = res_ghost.text
+                    st.session_state['ghost_target_mem'] = ghost_domain
                 except Exception as e:
                     st.error(f"GHOST Error: {e}")
         else:
             st.warning(t("Please enter a valid target domain."))
+            
+    if st.session_state['ghost_result']:
+        st.error(f"### GHOST Scan Complete for: {st.session_state['ghost_target_mem']}")
+        with st.container(border=True):
+            st.markdown(st.session_state['ghost_result'])
+        if st.button("Clear GHOST Scan"):
+            st.session_state['ghost_result'] = None
+            st.rerun()
 
     # --- OPERATION KRAKEN (CYBER KILL CHAIN SIMULATION) ---
     st.divider()
@@ -4107,7 +4138,7 @@ elif mode == t("5. Live Radar (RSS/Reddit)"):
                 Using your Google Search grounding, look up recent infrastructure details, known vulnerabilities, or technologies associated with this domain.
                     
                 Format the report as a "Red Team Exploitation Blueprint" using the MITRE ATT&CK framework.
-                CRITICAL RULE: Write your entire response strictly in {st.session_state['global_lang']}.
+                CRITICAL RULE: Output the "Red Team Exploitation Blueprint" IMMEDIATELY without introductions. Write strictly in {st.session_state['global_lang']}.
                 """
                 try:
                     client = genai.Client(api_key=key)
@@ -4715,6 +4746,9 @@ elif mode == t("7. Panopticon (HVT Watchlist)"):
         # Fallback if the table or database hasn't been created yet
         df_panopticon = pd.DataFrame()
         
+    # SAFE TARGET LIST FOR OPERATIONS (Evita crash se il DB è vuoto)
+    target_list = df_panopticon['agent_id'].unique().tolist() if not df_panopticon.empty and 'agent_id' in df_panopticon.columns else []
+        
     if not df_panopticon.empty:
         # Strategic Metrics (Translated)
         c_p1, c_p2, c_p3 = st.columns(3)
@@ -4743,13 +4777,21 @@ elif mode == t("7. Panopticon (HVT Watchlist)"):
         col_btn1, col_btn2 = st.columns([1, 4])
         with col_btn1:
             if st.button(t("Save Changes to DB"), type="primary", help=t("Applies changes and deletions to the persistent SQLite database.")):
-                # Clear current table and append the updated dataframe
-                conn.execute("DELETE FROM targets")
+                # 1. Clear current table safely and COMMIT the deletion to disk
+                cur = conn.cursor()
+                cur.execute("DELETE FROM targets")
+                conn.commit()
+                
+                # 2. Rewrite the table with the remaining rows
                 edited_pan.to_sql('targets', conn, if_exists='append', index=False)
+                
+                # 3. Success message and UI Refresh to sync Module 0
                 st.success(t("Database Updated Successfully!"))
+                time.sleep(0.5)
+                st.rerun()
         
         with col_btn2:
-            st.markdown(f"**🔒 {t('Black-Box: Secure Export Protocol')}**")
+            st.markdown(f"**{t('Black-Box: Secure Export Protocol')}**")
             
             # Generate a persistent secure password for the session
             if 'export_pwd' not in st.session_state:
@@ -4767,7 +4809,7 @@ elif mode == t("7. Panopticon (HVT Watchlist)"):
             c_down1, c_down2 = st.columns([1, 2])
             with c_down1:
                 st.download_button(
-                    label=f"📥 {t('Download Encrypted ZIP')}", 
+                    label=f"{t('Download Encrypted ZIP')}", 
                     data=zip_buffer.getvalue(), 
                     file_name=f"RAP_BlackBox_{datetime.now().strftime('%Y%m%d_%H%M')}.zip", 
                     mime="application/zip",
@@ -4859,837 +4901,764 @@ elif mode == t("7. Panopticon (HVT Watchlist)"):
                     agraph(nodes=nodes, edges=edges, config=config)
                 else:
                     st.info("Not enough data in the Panopticon to build a network map. Analyze targets in Module 2 first.")
-        
-        # --- OSINT AUTO-ENRICHMENT (TARGET HUNTER) ---
-        st.markdown("---")
-        st.subheader("Hunter Module: OSINT Auto-Enrichment")
-        st.caption("Generate instant deep-web search vectors and infrastructure queries for known targets.")
-        
-        c_hunt1, c_hunt2 = st.columns([1, 2])
-        with c_hunt1:
-            target_to_hunt = st.selectbox("Select Target to Investigate:", df_panopticon['agent_id'].unique())
-            
-        with c_hunt2:
-            if target_to_hunt:
-                # Clean the target name for safe URL encoding
-                safe_target = urllib.parse.quote(str(target_to_hunt))
-                
-                with st.expander(f"Deploy Search Vectors for: {target_to_hunt}", expanded=True):
-                    st.markdown("**1. Deep Web & Leaks (Google Dorks)**")
-                    st.markdown(f"- [Search for Leaked Documents (PDF/DOCX)](https://www.google.com/search?q=ext:pdf+OR+ext:docx+%22{safe_target}%22+%22confidential%22+OR+%22internal%22)")
-                    st.markdown(f"- [Search Open Directories](https://www.google.com/search?q=intitle:%22index+of%22+%22{safe_target}%22)")
-                    st.markdown(f"- [Search Pastebin Dumps](https://www.google.com/search?q=site:pastebin.com+%22{safe_target}%22)")
-                    
-                    st.markdown("**2. Social & Public Footprint**")
-                    st.markdown(f"- [LinkedIn Cross-Reference](https://www.google.com/search?q=site:linkedin.com/in+%22{safe_target}%22)")
-                    st.markdown(f"- [Twitter/X Advanced Search](https://twitter.com/search?q=%22{safe_target}%22&src=typed_query)")
-                    st.markdown(f"- [Reddit Mention Tracker](https://www.reddit.com/search/?q=%22{safe_target}%22)")
-                    
-                    st.markdown("**3. Infrastructure & Cyber Intel (If Target is a Domain/IP)**")
-                    st.markdown(f"- [Shodan (Exposed Ports & IoT)](https://www.shodan.io/search?query={safe_target})")
-                    st.markdown(f"- [Censys (Certificates & Hosts)](https://search.censys.io/search?resource=hosts&q={safe_target})")
-                    st.markdown(f"- [Wayback Machine (Deleted History)](https://web.archive.org/web/*/{safe_target}*)")
-
-        # --- OPERATION MIDAS (CRYPTO-FORENSICS) ---
-        st.markdown("---")
-        st.subheader("Operation MIDAS: Crypto-Forensics & Dark Web Intel")
-        st.caption("Trace illicit financing. Enter a Crypto Wallet Address (BTC, ETH, USDT) to scan the surface and deep web for known affiliations, ransomware connections, or OFAC sanctions.")
-        
-        wallet_address = st.text_input("Target Wallet Address:", placeholder="e.g., 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
-        
-        if st.button("Initiate Follow-the-Money Protocol", type="primary"):
-            if wallet_address:
-                with st.spinner("Scanning blockchain footprints and dark web intelligence..."):
-                    midas_prompt = f"""
-                    You are an elite Crypto-Forensic Analyst and Financial Intelligence AI (Operation MIDAS).
-                    Target Cryptocurrency Wallet: "{wallet_address}"
-                    
-                    Using your Google Search grounding capabilities, look for any known affiliations, ransomware demands, exchange tracking, OFAC sanctions, or dark web forum mentions of this exact wallet address.
-                    
-                    Format the report as a highly classified "Financial Intelligence Dossier". Include:
-                    1. Known Entity/Affiliation (if any).
-                    2. Historical illicit activity associated with this address.
-                    3. Risk Score (0-100).
-                    
-                    CRITICAL RULE: Write your entire dossier strictly in {st.session_state['global_lang']}.
-                    """
-                    try:
-                        client = genai.Client(api_key=key)
-                        config_tools = types.GenerateContentConfig(tools=[{"google_search": {}}])
-                        res_midas = client.models.generate_content(
-                            model='gemini-2.0-flash', 
-                            contents=midas_prompt,
-                            config=config_tools
-                        )
-                        st.success(f"Crypto-Forensic Dossier Compiled for: {wallet_address[:8]}...")
-                        with st.container(border=True):
-                            st.markdown(res_midas.text)
-                    except Exception as e:
-                        st.error(f"MIDAS Encountered an error during scan: {e}")
-
-            else:
-                st.warning("Please enter a valid wallet address.")
-
-                # --- OPERATION CERBERUS (DATA BREACH SCANNER) ---
-        st.markdown("---")
-        st.subheader("Operation CERBERUS: Dark Web & Breach Footprint")
-        st.caption("Search for compromised credentials. Enter an Email, Username, or Phone Number to scan historical data leaks and pastebin dumps via surface/deep web indexing.")
-        
-        cerberus_target = st.text_input("Target Identity (Email/Username):", placeholder="e.g., target@email.com or @DarkHacker99")
-        
-        if st.button("Unleash CERBERUS", type="primary"):
-            if cerberus_target:
-                with st.spinner("Scouring known breach databases and leak forums..."):
-                    cerb_prompt = f"""
-                    You are Operation CERBERUS, an elite Cyber Intelligence AI.
-                    Target Identity: "{cerberus_target}"
-                    
-                    Using your Google Search grounding capabilities, search for mentions of this identity in relation to "data breach", "leak", "pastebin", "dump", "hacked", or known databases like RockYou2024, Collection #1, etc.
-                    
-                    Format the report as a "Compromise Assessment". Include:
-                    1. Likely compromised platforms/services (if found).
-                    2. Risk of credential stuffing or identity theft.
-                    3. Recommended OPSEC remediation.
-                    
-                    Note: Do not output actual passwords, just the fact that they might be compromised.
-                    CRITICAL RULE: Write your entire response strictly in {st.session_state['global_lang']}.
-                    """
-                    try:
-                        client = genai.Client(api_key=key)
-                        config_tools = types.GenerateContentConfig(tools=[{"google_search": {}}])
-                        res_cerb = client.models.generate_content(
-                            model='gemini-2.0-flash', 
-                            contents=cerb_prompt,
-                            config=config_tools
-                        )
-                        st.error(f"CERBERUS Footprint Scan Complete for: {cerberus_target}")
-                        with st.container(border=True):
-                            st.markdown(res_cerb.text)
-                    except Exception as e:
-                        st.error(f"CERBERUS Error: {e}")
-            else:
-                st.warning("Please enter a target identity.")
-            
-        # --- OPERATION WATCHER (AUTONOMOUS OSINT AGENT) ---
-        st.markdown("---")
-        st.subheader("Operation WATCHER: Autonomous OSINT Agent")
-        st.caption("Deploy an AI agent with live internet access to gather real-time intelligence, recent news, and digital footprint analysis on any target.")
-        
-        watcher_target = st.text_input("Enter Target for Live Reconnaissance:", placeholder="e.g., CyberCorp, John Doe, APT28")
-        
-        if st.button("Deploy Watcher Agent", type="primary"):
-            if not watcher_target:
-                st.warning("Please specify a target for the Watcher Agent.")
-            else:
-                with st.spinner(f"Agent deployed. Scouring the surface web for '{watcher_target}'..."):
-                    watcher_prompt = f"""
-                    You are "WATCHER", an elite autonomous OSINT agent. 
-                    Your mission is to gather the most up-to-date and critical intelligence on the following target: "{watcher_target}".
-                    
-                    Using your Google Search capabilities, find:
-                    1. Recent news, controversies, or legal issues.
-                    2. Known affiliations, aliases, or associated organizations.
-                    3. Digital footprint (social media presence, leaked data, known domains).
-                    
-                    CRITICAL RULE: Write your entire dossier strictly in {st.session_state['global_lang']}.
-                    Format the output as a highly tactical "Live OSINT Dossier" with bullet points. Cite your sources with URLs where possible.
-                    """
-                    try:
-                        client = genai.Client(api_key=key)
-                        # Enable real-time Google Search grounding
-                        config_tools = types.GenerateContentConfig(
-                            tools=[{"google_search": {}}]
-                        )
-                        watcher_res = client.models.generate_content(
-                            model='gemini-2.0-flash', 
-                            contents=watcher_prompt,
-                            config=config_tools
-                        )
-                        st.success(f"Live Dossier compiled for: {watcher_target}")
-                        
-                        # Display the intelligence report
-                        with st.container(border=True):
-                            st.markdown(watcher_res.text)
-                            
-                        # Add a quick button to save this entity to the Panopticon if not already there
-                        if watcher_target not in df_panopticon['agent_id'].values:
-                            st.info("Target is not in your Panopticon Watchlist. Would you like to log it?")
-                            # Using a form to avoid immediate rerun issues with nested buttons
-                            with st.form("add_watcher_target_form"):
-                                new_risk = st.slider("Assign Threat Score", 0, 100, 50)
-                                new_type = st.selectbox("Assign Classification", ["Unknown Entity", "High-Value Target", "Corporate Entity", "Cyber Threat"])
-                                if st.form_submit_button("Log Target to Database"):
-                                    save_to_panopticon(watcher_target, new_risk, new_type)
-                                    st.success(f"{watcher_target} added to persistent database. Reloading...")
-                                    time.sleep(1)
-                                    st.rerun()
-                                    
-                    except Exception as e:
-                        st.error(f"Watcher Agent encountered an error: {e}")
-
-        # --- OPERATION SIREN (ADVERSARIAL EMULATION) ---
-        st.markdown("---")
-        st.subheader("Operation SIREN: Adversarial Emulation (Red Teaming)")
-        st.caption("Generate a psychological cyber-attack vector tailored to a specific target's vulnerabilities.")
-        
-        if 'siren_result' not in st.session_state: st.session_state['siren_result'] = None
-        if 'siren_target_mem' not in st.session_state: st.session_state['siren_target_mem'] = ""
-        
-        c_siren1, c_siren2 = st.columns(2)
-        with c_siren1:
-            siren_target = st.selectbox("Select Target for SIREN Protocol:", df_panopticon['agent_id'].unique(), key="siren_target_sel")
-        with c_siren2:
-            siren_context = st.text_input("Pretext / Vulnerability:", placeholder="e.g., 'Target loves crypto', 'Fake HR complaint'")
-        
-        if st.button("Generate Attack Vector (SIREN)", type="primary"):
-            if siren_target and siren_context:
-                with st.spinner("Crafting psychological payload..."):
-                    siren_prompt = f"""
-                    You are Operation SIREN, a Red Team Social Engineering AI.
-                    Target: {siren_target}
-                    Pretext: {siren_context}
-                    Draft a highly convincing, targeted Spear-Phishing email/message designed to manipulate the target.
-                    CRITICAL RULE: Write strictly in {st.session_state['global_lang']}.
-                    """
-                    try:
-                        client = genai.Client(api_key=key)
-                        res_siren = client.models.generate_content(model='gemini-2.5-flash', contents=siren_prompt)
-                        st.session_state['siren_result'] = res_siren.text
-                        st.session_state['siren_target_mem'] = siren_target
-                    except Exception as e:
-                        st.error(f"SIREN Error: {e}")
-            else:
-                st.warning("Please select a target and provide a pretext.")
-                
-        if st.session_state['siren_result']:
-            st.error(f"### SIREN Payload: {st.session_state['siren_target_mem']}")
-            with st.container(border=True):
-                st.markdown(st.session_state['siren_result'])
-            if st.button("Clear SIREN Payload"):
-                st.session_state['siren_result'] = None
-                st.rerun()
-        
-        # --- OPERATION ECHO (BEHAVIORAL TARGET CLONING) ---
-        st.markdown("---")
-        st.subheader("Operation ECHO: Behavioral Target Cloning")
-        st.caption("Spawn a simulated interactive AI clone of a selected target based on their known Panopticon profile.")
-        
-        if 'echo_result' not in st.session_state: st.session_state['echo_result'] = None
-        if 'echo_target_mem' not in st.session_state: st.session_state['echo_target_mem'] = ""
-        
-        c_echo1, c_echo2 = st.columns(2)
-        with c_echo1:
-            echo_target = st.selectbox("Select Target to Clone:", df_panopticon['agent_id'].unique(), key="echo_target_sel")
-        with c_echo2:
-            echo_question = st.text_input("Interrogate the Clone (What do you say/ask?):", placeholder="e.g., 'We have your hard drives. Will you cooperate?'")
-            
-        if st.button("Initialize ECHO Simulation", type="primary"):
-            if echo_target and echo_question:
-                with st.spinner(f"Cloning cognitive patterns of {echo_target}..."):
-                    target_info = df_panopticon[df_panopticon['agent_id'] == echo_target].iloc[0]
-                    echo_prompt = f"""
-                    You are Operation ECHO, a Behavioral Profiling AI ROLEPLAYING as {echo_target}.
-                    Threat Score: {target_info['risk_score']}/100. Classification: {target_info['threat_type']}.
-                    Interrogator asks: "{echo_question}"
-                    Respond IN CHARACTER. Write strictly in {st.session_state['global_lang']}.
-                    """
-                    try:
-                        client = genai.Client(api_key=key)
-                        res_echo = client.models.generate_content(model='gemini-2.5-flash', contents=echo_prompt)
-                        st.session_state['echo_result'] = res_echo.text
-                        st.session_state['echo_target_mem'] = echo_target
-                    except Exception as e:
-                        st.error(f"ECHO Error: {e}")
-            else:
-                st.warning("Please select a target and enter a prompt.")
-                
-        if st.session_state['echo_result']:
-            st.warning(f"### ECHO Clone Responding: [{st.session_state['echo_target_mem']}]")
-            with st.container(border=True):
-                st.markdown(st.session_state['echo_result'])
-            if st.button("Terminate ECHO Link"):
-                st.session_state['echo_result'] = None
-                st.rerun()
-
-        # --- OPERATION PROMETHEUS (DE-ANONYMIZATION) ---
-        st.markdown("---")
-        st.subheader("Operation PROMETHEUS: Stylometric De-Anonymization")
-        st.caption("Paste an anonymous text/manifesto. The AI will cross-reference it with a known target via web scraping.")
-        
-        if 'prom_result' not in st.session_state: st.session_state['prom_result'] = None
-        if 'prom_target_mem' not in st.session_state: st.session_state['prom_target_mem'] = ""
-        
-        c_prom1, c_prom2 = st.columns([1, 2])
-        with c_prom1:
-            prom_target = st.selectbox("Compare against Target:", df_panopticon['agent_id'].unique(), key="prom_target_sel")
-        with c_prom2:
-            anon_text = st.text_area("Paste Anonymous Text:", placeholder="e.g., 'The system is flawed. We will strike at dawn...'")
-            
-        if st.button("Run PROMETHEUS Match", type="primary"):
-            if prom_target and anon_text:
-                with st.spinner(f"Extracting linguistic DNA for {prom_target}..."):
-                    prom_prompt = f"""
-                    You are Operation PROMETHEUS, a Forensic Linguistics AI.
-                    ANONYMOUS TEXT: "{anon_text}"
-                    Compare against known public writings of: "{prom_target}".
-                    Provide MATCH PROBABILITY. Write strictly in {st.session_state['global_lang']}.
-                    """
-                    try:
-                        client = genai.Client(api_key=key)
-                        config_tools = types.GenerateContentConfig(tools=[{"google_search": {}}])
-                        res_prom = client.models.generate_content(model='gemini-2.0-flash', contents=prom_prompt, config=config_tools)
-                        st.session_state['prom_result'] = res_prom.text
-                        st.session_state['prom_target_mem'] = prom_target
-                    except Exception as e:
-                        st.error(f"PROMETHEUS Error: {e}")
-            else:
-                st.warning("Please select a target and paste text.")
-                
-        if st.session_state['prom_result']:
-            st.error(f"### PROMETHEUS Match Analysis: {st.session_state['prom_target_mem']}")
-            with st.container(border=True):
-                st.markdown(st.session_state['prom_result'])
-            if st.button("Clear PROMETHEUS Intel"):
-                st.session_state['prom_result'] = None
-                st.rerun()
-        
-        # --- OPERATION M.I.C.E. (HUMINT ASSET RECRUITMENT) ---
-        st.markdown("---")
-        st.subheader("Operation M.I.C.E.: HUMINT Asset Recruitment")
-        st.caption("Generate a psychological recruitment and manipulation manual (Money, Ideology, Compromise, Ego).")
-        
-        if 'mice_result' not in st.session_state: st.session_state['mice_result'] = None
-        if 'mice_target_mem' not in st.session_state: st.session_state['mice_target_mem'] = ""
-        
-        mice_target = st.selectbox("Select Target to Profile for Recruitment:", df_panopticon['agent_id'].unique(), key="mice_target_sel")
-        
-        if st.button("Generate M.I.C.E. Dossier", type="primary"):
-            if mice_target:
-                with st.spinner(f"Extracting psychological vulnerabilities for {mice_target}..."):
-                    target_info = df_panopticon[df_panopticon['agent_id'] == mice_target].iloc[0]
-                    mice_prompt = f"""
-                    You are an elite CIA/KGB HUMINT Recruiter. Target: {mice_target}.
-                    Draft a M.I.C.E. "Asset Recruitment Manual". Write strictly in {st.session_state['global_lang']}.
-                    """
-                    try:
-                        client = genai.Client(api_key=key)
-                        res_mice = client.models.generate_content(model='gemini-2.5-flash', contents=mice_prompt)
-                        st.session_state['mice_result'] = res_mice.text
-                        st.session_state['mice_target_mem'] = mice_target
-                    except Exception as e:
-                        st.error(f"M.I.C.E. Error: {e}")
-                        
-        if st.session_state['mice_result']:
-            st.warning(f"### M.I.C.E. Manual: {st.session_state['mice_target_mem']}")
-            with st.container(border=True):
-                st.markdown(st.session_state['mice_result'])
-            if st.button("Clear M.I.C.E. Dossier"):
-                st.session_state['mice_result'] = None
-                st.rerun()
-
-        # --- OPERATION OMNISCIENCE (CROSS-PLATFORM FOOTPRINTING) ---
-        st.markdown("---")
-        st.subheader("Operation OMNISCIENCE: Identity Footprinting")
-        st.caption("Enter a pseudonym, handle, or email. Scour the web to trace digital footprints.")
-        
-        if 'omni_result' not in st.session_state: st.session_state['omni_result'] = None
-        if 'omni_target_mem' not in st.session_state: st.session_state['omni_target_mem'] = ""
-        
-        omni_target = st.text_input("Target Handle / Pseudonym / Email:", placeholder="e.g., DarkCoder99 or john.doe@example.com")
-        
-        if st.button("Initiate OMNISCIENCE Trace", type="primary"):
-            if omni_target:
-                with st.spinner(f"Scouring global indexes for {omni_target}..."):
-                    omni_prompt = f"""
-                    You are Operation OMNISCIENCE, an elite OSINT Footprinting AI.
-                    TARGET: "{omni_target}"
-                    Provide a "Digital Footprint Report". Write strictly in {st.session_state['global_lang']}.
-                    """
-                    try:
-                        client = genai.Client(api_key=key)
-                        config_tools = types.GenerateContentConfig(tools=[{"google_search": {}}])
-                        res_omni = client.models.generate_content(model='gemini-2.0-flash', contents=omni_prompt, config=config_tools)
-                        st.session_state['omni_result'] = res_omni.text
-                        st.session_state['omni_target_mem'] = omni_target
-                    except Exception as e:
-                        st.error(f"OMNISCIENCE Error: {e}")
-            else:
-                st.warning("Please enter a target identifier.")
-                
-        if st.session_state['omni_result']:
-            st.error(f"### OMNISCIENCE Dossier: {st.session_state['omni_target_mem']}")
-            with st.container(border=True):
-                st.markdown(st.session_state['omni_result'])
-            if st.button("Clear OMNISCIENCE Intel"):
-                st.session_state['omni_result'] = None
-                st.rerun()
-    
-        # --- OPERATION WENDIGO (AUTONOMOUS WEB AGENT) ---
-        st.markdown("---")
-        st.subheader("Operation WENDIGO: Autonomous Deep Web Agent")
-        st.caption("Deploy an autonomous AI agent to deeply investigate a target, bypass surface-level info, and extract a comprehensive intelligence dossier.")
-
-        # 1. Initialize persistent memory
-        if 'wendigo_result' not in st.session_state: st.session_state['wendigo_result'] = None
-        if 'wendigo_target_mem' not in st.session_state: st.session_state['wendigo_target_mem'] = ""
-
-        wendigo_target = st.text_input("Target Entity / Domain to Infiltrate:", placeholder="e.g., suspected-scam-site.com or 'John Doe'")
-
-        if st.button("Deploy WENDIGO Agent", type="primary"):
-            if wendigo_target:
-                with st.spinner(f"Agent WENDIGO is navigating the web, analyzing data structures for {wendigo_target}..."):
-                    wendigo_prompt = f"""
-                    You are Operation WENDIGO, an elite Autonomous Web Intelligence Agent.
-                    TARGET: "{wendigo_target}"
-
-                    Using your Google Search grounding capabilities, perform a deep-dive OSINT investigation.
-                    Go beyond the surface. Look for:
-                    1. Associated entities, domains, or infrastructure.
-                    2. Hidden affiliations, past controversies, or historical data.
-                    3. Potential vulnerabilities or exposed information.
-
-                    Format as a "Deep OSINT Dossier".
-                    CRITICAL RULE: Write strictly in {st.session_state['global_lang']}.
-                    """
-                    try:
-                        client = genai.Client(api_key=key)
-                        config_tools = types.GenerateContentConfig(tools=[{"google_search": {}}])
-                        res_wendigo = client.models.generate_content(model='gemini-2.0-flash', contents=wendigo_prompt, config=config_tools)
-                        
-                        # 2. Save to memory
-                        st.session_state['wendigo_result'] = res_wendigo.text
-                        st.session_state['wendigo_target_mem'] = wendigo_target
-                    except Exception as e:
-                        st.error(f"WENDIGO Error: {e}")
-            else:
-                st.warning("Please specify a target for WENDIGO.")
-
-        # 3. Render the persistent memory
-        if st.session_state['wendigo_result']:
-            st.error(f"### WENDIGO Deep Dossier: {st.session_state['wendigo_target_mem']}")
-            with st.container(border=True):
-                st.markdown(st.session_state['wendigo_result'])
-            if st.button("Recall WENDIGO Agent"):
-                st.session_state['wendigo_result'] = None
-                st.rerun()
-
-        # --- OPERATION LAZARUS (FININT & DE-OFFSHORING) ---
-        st.markdown("---")
-        st.subheader("Operation LAZARUS: FININT & Corporate De-Offshoring")
-        st.caption("Financial Intelligence (FININT). Enter a Shell Company or individual to trace Ultimate Beneficial Owners (UBOs) and offshore links.")
-
-        # 1. Initialize persistent memory
-        if 'lazarus_result' not in st.session_state: st.session_state['lazarus_result'] = None
-        if 'lazarus_target_mem' not in st.session_state: st.session_state['lazarus_target_mem'] = ""
-
-        lazarus_target = st.text_input("Shell Company / Target Entity:", placeholder="e.g., 'Mossack Fonseca', 'Global Trading LTD'")
-
-        if st.button("Initiate LAZARUS Trace", type="primary"):
-            if lazarus_target:
-                with st.spinner(f"Interrogating global corporate registries and offshore leaks for {lazarus_target}..."):
-                    lazarus_prompt = f"""
-                    You are Operation LAZARUS, an elite Financial Intelligence (FININT) AI.
-                    TARGET ENTITY: "{lazarus_target}"
-
-                    Using your Google Search capabilities, scour corporate registries, offshore leak databases (like Panama Papers, Pandora Papers), and financial news to de-anonymize this entity.
-
-                    Provide a "FININT De-Offshoring Report" including:
-                    1. Known Jurisdictions (e.g., BVI, Cayman Islands, Cyprus).
-                    2. Suspected Ultimate Beneficial Owners (UBOs) or Proxy Directors.
-                    3. Corporate Network Graph (Linked companies and subsidiaries).
-                    4. Financial Risk Assessment (Money laundering flags, sanctions evasion).
-
-                    CRITICAL RULE: Write your entire response strictly in {st.session_state['global_lang']}.
-                    """
-                    try:
-                        client = genai.Client(api_key=key)
-                        config_tools = types.GenerateContentConfig(tools=[{"google_search": {}}])
-                        res_lazarus = client.models.generate_content(model='gemini-2.0-flash', contents=lazarus_prompt, config=config_tools)
-                        
-                        # 2. Save to memory
-                        st.session_state['lazarus_result'] = res_lazarus.text
-                        st.session_state['lazarus_target_mem'] = lazarus_target
-                    except Exception as e:
-                        st.error(f"LAZARUS Error: {e}")
-            else:
-                st.warning("Please enter a corporate target.")
-
-        # 3. Render the persistent memory
-        if st.session_state['lazarus_result']:
-            st.success(f"### LAZARUS FININT Report: {st.session_state['lazarus_target_mem']}")
-            with st.container(border=True):
-                st.markdown(st.session_state['lazarus_result'])
-            if st.button("Clear LAZARUS Trace"):
-                st.session_state['lazarus_result'] = None
-                st.rerun()
-
-        # --- OPERATION DOPPELGÄNGER (VOICE CLONING / VISHING) ---
-        st.markdown("---")
-        st.subheader("Operation DOPPELGÄNGER: Voice Cloning / Vishing Matrix")
-        st.caption("Generate a psychological script for an AI Voice Clone (Deepfake) to execute a targeted phone-based social engineering attack (Vishing).")
-
-        # 1. Initialize persistent memory
-        if 'doppel_result' not in st.session_state: st.session_state['doppel_result'] = None
-        if 'doppel_target_mem' not in st.session_state: st.session_state['doppel_target_mem'] = ""
-
-        c_dop1, c_dop2 = st.columns(2)
-        with c_dop1:
-            doppel_target = st.selectbox("Select Target to Attack:", df_panopticon['agent_id'].unique(), key="doppel_target_sel")
-        with c_dop2:
-            doppel_scenario = st.text_input("Vishing Scenario:", placeholder="e.g., 'IT Support calling about a compromised password'")
-
-        if st.button("Generate Vishing Script", type="primary"):
-            if doppel_target and doppel_scenario:
-                with st.spinner(f"Crafting psychological voice-script for {doppel_target}..."):
-                    target_info = df_panopticon[df_panopticon['agent_id'] == doppel_target].iloc[0]
-                    doppel_prompt = f"""
-                    You are Operation DOPPELGÄNGER, an elite Social Engineering AI specializing in Vishing (Voice Phishing).
-                    Target: {doppel_target} (Risk Score: {target_info['risk_score']})
-                    Scenario: {doppel_scenario}
-
-                    Draft a highly convincing, conversational script designed to be read by an AI Voice Clone of a trusted authority figure (e.g., CEO, IT Admin).
-                    Include:
-                    1. **Caller Persona:** Who the voice clone is pretending to be.
-                    2. **The Script:** The exact dialogue, including pauses [pause] and simulated human imperfections [sigh], [clear throat] to make the deepfake sound real.
-                    3. **The Trap:** The exact moment the target is asked to reveal the credential or execute the action.
-
-                    CRITICAL RULE: Write your entire response strictly in {st.session_state['global_lang']}.
-                    """
-                    try:
-                        client = genai.Client(api_key=key)
-                        res_doppel = client.models.generate_content(model='gemini-2.5-flash', contents=doppel_prompt)
-                        # 2. Save to memory
-                        st.session_state['doppel_result'] = res_doppel.text
-                        st.session_state['doppel_target_mem'] = doppel_target
-                    except Exception as e:
-                        st.error(f"DOPPELGÄNGER Error: {e}")
-            else:
-                st.warning("Please select a target and provide a scenario.")
-
-        # 3. Render the persistent memory
-        if st.session_state['doppel_result']:
-            st.error(f"### DOPPELGÄNGER Script: {st.session_state['doppel_target_mem']}")
-            with st.container(border=True):
-                st.markdown(st.session_state['doppel_result'])
-            if st.button("Clear DOPPELGÄNGER Intel"):
-                st.session_state['doppel_result'] = None
-                st.rerun()
-
-        # --- OPERATION MIRAGE (SYNTHETIC IDENTITY GENERATOR) ---
-        st.markdown("---")
-        st.subheader("Operation MIRAGE: Synthetic Identity Forge")
-        st.caption("Generate a fully fleshed-out synthetic identity (Sockpuppet) for undercover OSINT operations, complete with image generation prompts.")
-
-        # 1. Initialize persistent memory
-        if 'mirage_result' not in st.session_state: st.session_state['mirage_result'] = None
-        if 'mirage_target_mem' not in st.session_state: st.session_state['mirage_target_mem'] = ""
-
-        mirage_role = st.text_input("Desired Persona / Role:", placeholder="e.g., 'Disgruntled System Administrator at a Tech Firm' or 'Radical Crypto Activist'")
-
-        if st.button("Forge Synthetic Identity", type="primary"):
-            if mirage_role:
-                with st.spinner(f"Generating synthetic psychological profile and back-story for '{mirage_role}'..."):
-                    mirage_prompt = f"""
-                    You are Operation MIRAGE, an elite Undercover Identity Generator.
-                    Create a comprehensive synthetic identity (sockpuppet) for this role: "{mirage_role}".
-
-                    Provide a "Synthetic Identity Dossier" including:
-                    1. **Basic Info:** Full Name, Age, Location, Job Title.
-                    2. **Psychological Profile:** Likes, dislikes, political/social views, hobbies, and typing quirks (e.g., "uses too many ellipses", "never capitalizes").
-                    3. **Backstory:** A brief, highly believable life story and reason for being in this role.
-                    4. **Image Generation Prompt:** A highly detailed prompt in English (Midjourney/DALL-E style) to generate a photorealistic avatar for this person (e.g., "A selfie of a tired 35-year-old IT worker, fluorescent lighting, smartphone camera, highly detailed --ar 1:1").
-
-                    CRITICAL RULE: Write sections 1-3 strictly in {st.session_state['global_lang']}. Section 4 must be in English for the image generator.
-                    """
-                    try:
-                        client = genai.Client(api_key=key)
-                        res_mirage = client.models.generate_content(model='gemini-2.5-flash', contents=mirage_prompt)
-                        # 2. Save to memory
-                        st.session_state['mirage_result'] = res_mirage.text
-                        st.session_state['mirage_target_mem'] = mirage_role
-                    except Exception as e:
-                        st.error(f"MIRAGE Error: {e}")
-            else:
-                st.warning("Please specify a desired persona/role.")
-
-        # 3. Render the persistent memory
-        if st.session_state['mirage_result']:
-            st.success(f"### MIRAGE Identity: {st.session_state['mirage_target_mem']}")
-            with st.container(border=True):
-                st.markdown(st.session_state['mirage_result'])
-            if st.button("Burn Identity (Clear MIRAGE)"):
-                st.session_state['mirage_result'] = None
-                st.rerun()
-    
-        # --- OPERATION ATLAS (3D GEO-INTELLIGENCE) ---
-        st.markdown("---")
-        st.subheader("Operation ATLAS: 3D Geo-Intelligence Globe")
-        st.caption("Deploy a holographic tracking system. Enter an IP address, a server facility, or a physical target to triangulate coordinates and assess localized threat levels.")
-
-        # 1. Initialize persistent memory
-        if 'atlas_result' not in st.session_state: st.session_state['atlas_result'] = None
-        if 'atlas_target_mem' not in st.session_state: st.session_state['atlas_target_mem'] = ""
-        if 'atlas_coords' not in st.session_state: st.session_state['atlas_coords'] = None
-
-        atlas_target = st.text_input("Target Location / IP / Infrastructure:", placeholder="e.g., '198.51.100.14', 'Kremlin, Moscow', or 'Three Gorges Dam'")
-
-        if st.button("Initiate ATLAS Triangulation", type="primary"):
-            if atlas_target:
-                with st.spinner(f"Pinging global satellites and triangulating position for '{atlas_target}'..."):
-                    atlas_prompt = f"""
-                    You are Operation ATLAS, a Tier-1 Geospatial Intelligence (GEOINT) AI.
-                    TARGET: "{atlas_target}"
-
-                    Deduce or simulate the exact geographic coordinates of this target based on public intelligence or IP geolocation databases.
-                    Assess the strategic value or threat level of this location.
-
-                    CRITICAL RULE: Return ONLY a valid JSON object. Do not include markdown or outside text.
-                    Format:
-                    {{
-                        "location_name": "City, Country",
-                        "lat": 0.0000,
-                        "lon": 0.0000,
-                        "threat_level": 85,
-                        "analysis": "Brief tactical analysis of this location."
-                    }}
-                    Make sure the analysis is written in {st.session_state['global_lang']}.
-                    """
-                    try:
-                        client = genai.Client(api_key=key)
-                        res_atlas = client.models.generate_content(model='gemini-2.5-flash', contents=atlas_prompt)
-                        atlas_json = extract_json(res_atlas.text)
-                        
-                        if atlas_json and 'lat' in atlas_json and 'lon' in atlas_json:
-                            # 2. Save to memory
-                            st.session_state['atlas_result'] = atlas_json
-                            st.session_state['atlas_target_mem'] = atlas_target
-                            
-                            # Safety catch for lists in JSON
-                            lat_val = atlas_json['lat'][0] if isinstance(atlas_json['lat'], list) else atlas_json['lat']
-                            lon_val = atlas_json['lon'][0] if isinstance(atlas_json['lon'], list) else atlas_json['lon']
-                            st.session_state['atlas_coords'] = (float(lat_val), float(lon_val))
-                        else:
-                            st.error("ATLAS could not lock onto valid coordinates.")
-                            
-                    except Exception as e:
-                        st.error(f"ATLAS Error: {e}")
-            else:
-                st.warning("Please provide a target to triangulate.")
-
-        # 3. Render the persistent memory and 3D Globe
-        if st.session_state['atlas_result'] and st.session_state['atlas_coords']:
-            a_data = st.session_state['atlas_result']
-            lat, lon = st.session_state['atlas_coords']
-            
-            st.success(f"### ATLAS Lock Confirmed: {st.session_state['atlas_target_mem']}")
-            
-            # --- Draw the 3D Holographic Globe using Plotly ---
-            # Retrieve dynamic HQ coordinates from global memory
-            hq_lat, hq_lon, hq_city = st.session_state['hq_coords']
-            
-            df_globe = pd.DataFrame({
-                'lat': [lat, hq_lat], # Target + Dynamic HQ
-                'lon': [lon, hq_lon],
-                'name': [a_data.get('location_name', 'Target'), f'HQ ({hq_city})'],
-                'size': [a_data.get('threat_level', 50) / 2, 10],
-                'color': ['red', 'blue']
-            })
-            
-            fig_globe = px.scatter_geo(
-                df_globe, 
-                lat="lat", lon="lon", 
-                hover_name="name", 
-                size="size",
-                color="color",
-                color_discrete_map={'red':'#EF4444', 'blue':'#38BDF8'},
-                projection="orthographic"
-            )
-            
-            # Draw connection line (Missile/Signal trajectory from dynamic HQ to Target)
-            fig_globe.add_trace(go.Scattergeo(
-                lat=[hq_lat, lat],
-                lon=[hq_lon, lon],
-                mode='lines',
-                line=dict(width=2, color='#EF4444'),
-                hoverinfo='none'
-            ))
-
-            fig_globe.update_layout(
-                showlegend=False,
-                geo=dict(
-                    showframe=False, showcoastlines=True, showcountries=True,
-                    coastlinecolor="#334155", countrycolor="#334155",
-                    showocean=True, oceancolor='rgba(10, 15, 30, 1)',
-                    lakecolor='rgba(10, 15, 30, 1)',
-                    landcolor='rgba(2, 6, 23, 1)',
-                    bgcolor='rgba(0,0,0,0)',
-                    projection_rotation=dict(lon=lon, lat=lat, roll=0) # Auto-center on target
-                ),
-                paper_bgcolor='rgba(0,0,0,0)',
-                margin=dict(l=0, r=0, t=0, b=0),
-                height=400
-            )
-            
-            c_atl1, c_atl2 = st.columns([2, 1])
-            with c_atl1:
-                st.plotly_chart(fig_globe, use_container_width=True)
-            with c_atl2:
-                st.info(f"**Location:** {a_data.get('location_name', 'Unknown')}\n\n**Coordinates:** {lat:.4f}, {lon:.4f}\n\n**Threat Level:** {a_data.get('threat_level', 'N/A')}/100")
-                st.markdown(f"*{a_data.get('analysis', 'No analysis provided.')}*")
-                
-            if st.button("Clear ATLAS Tracking"):
-                st.session_state['atlas_result'] = None
-                st.session_state['atlas_coords'] = None
-                st.rerun()
-
-        # --- LEVEL 17.1: OPERATION ARACHNE (MASTER KNOWLEDGE GRAPH) ---
-        st.markdown("---")
-        st.subheader("Operation ARACHNE: Master Link Analysis")
-        st.caption("Visualizes all targets, identities, and infrastructures currently locked in your active session memory into a single web of intelligence.")
-        
-        if st.button("Generate Master Knowledge Graph", type="primary"):
-            with st.spinner("Connecting scattered intelligence points..."):
-                nodes = [Node(id="HQ", label="COMMAND HQ", size=40, color="#10B981", symbolType="star", font={'color': 'white'})]
-                edges = []
-                added_nodes = {"HQ"}
-                
-                # Scan session state for any active targets
-                op_map = {
-                    'wt_target_mem': ('WATCHTOWER (Kinetic)', '#38BDF8'),
-                    'cyclops_target_mem': ('CYCLOPS (IoT)', '#EF4444'),
-                    'daedalus_target_mem': ('DAEDALUS (Honeypot)', '#F59E0B'),
-                    'kraken_target_mem': ('KRAKEN (APT)', '#EF4444'),
-                    'midas_target_mem': ('MIDAS (Crypto)', '#F59E0B'),
-                    'mirage_target_mem': ('MIRAGE (Identity)', '#8B5CF6'),
-                    'wendigo_target_mem': ('WENDIGO (Deep Web)', '#64748B'),
-                    'atlas_target_mem': ('ATLAS (GEOINT)', '#38BDF8')
-                }
-                
-                for state_key, (op_label, op_color) in op_map.items():
-                    target = st.session_state.get(state_key)
-                    if target:
-                        # Add Operation Node
-                        op_id = f"OP_{state_key}"
-                        if op_id not in added_nodes:
-                            nodes.append(Node(id=op_id, label=op_label, size=25, color=op_color, font={'color': 'white', 'size': 10}))
-                            edges.append(Edge(source="HQ", target=op_id, color="rgba(255,255,255,0.2)"))
-                            added_nodes.add(op_id)
-                        
-                        # Add Target Node
-                        if target not in added_nodes:
-                            nodes.append(Node(id=target, label=str(target), size=20, color="#334155", font={'color': 'white'}))
-                            edges.append(Edge(source=op_id, target=target, color="rgba(255,255,255,0.5)"))
-                            added_nodes.add(target)
-                            
-                if len(nodes) > 1:
-                    config = Config(width="100%", height=500, directed=True, physics=True, hierarchical=False, nodeHighlightBehavior=True, highlightColor="#EF4444")
-                    agraph(nodes=nodes, edges=edges, config=config)
-                else:
-                    st.warning("No active operations found in memory. Run some tools first (like Midas, Atlas, or Watchtower) to build the graph.")
-
     else:
         # Translated empty state message
         st.info(f"🟢 **{t('The Panopticon is currently empty.')}**\n\n{t('Run analysis in the Social Data module. If the system detects entities with high toxicity and network impact, they will be automatically classified as High-Value Targets and permanently stored here.')}")
 
-# ==========================================
-# MODULE 8: CYBER-FORENSICS (PANDORA)
-# ==========================================
-elif mode == t("8. Cyber-Forensics (PANDORA)"):
-    st.header(t("8. Cyber-Forensics & Log Analysis"))
-    st.caption(t("Reverse engineer obfuscated malware scripts, phishing emails, or analyze raw network/firewall logs."))
+    # =================
+    # GLOBAL OPERATIONS
+    # =================
 
-    if "GEMINI_API_KEY" in st.secrets: 
-        key = st.secrets["GEMINI_API_KEY"]
-    else: 
-        key = st.text_input(t("API Key"), type="password")
-
-    # 1. Initialize persistent memory for Module 8
-    if 'pandora_result' not in st.session_state: st.session_state['pandora_result'] = None
-    if 'ids_result' not in st.session_state: st.session_state['ids_result'] = None
-
-    c_pan1, c_pan2 = st.columns([1, 1])
+    # --- OSINT AUTO-ENRICHMENT (TARGET HUNTER) ---
+    st.markdown("---")
+    st.subheader("Hunter Module: OSINT Auto-Enrichment")
+    st.caption("Generate instant deep-web search vectors and infrastructure queries for known targets.")
     
-    with c_pan1:
-        st.subheader(t("Operation PANDORA: Malware Reverse Engineering"))
-        suspect_code = st.text_area(t("Paste Obfuscated Code / Suspicious Script:"), height=250, placeholder="e.g., eval(function(p,a,c,k,e,d){...})")
+    c_hunt1, c_hunt2 = st.columns([1, 2])
+    with c_hunt1:
+        target_to_hunt = st.selectbox("Select Target to Investigate:", target_list)
         
-        if st.button(t("De-Obfuscate & Analyze Weapon"), type="primary"):
-            if suspect_code:
-                with st.spinner(t("Sandboxing and analyzing malicious payload...")):
-                    pandora_prompt = f"""
-                    You are Operation PANDORA, an elite Malware Reverse Engineer.
-                    Analyze this suspicious code snippet safely:
-                    
-                    ```
-                    {suspect_code[:15000]}
-                    ```
-                    
-                    Provide a "Payload Analysis Report" including:
-                    1. **Language & Obfuscation:** What is it and how is it hidden?
-                    2. **Malicious Capabilities:** What does this code actually do? (e.g., Steals cookies, establishes reverse shell, downloads ransomware).
-                    3. **Indicators of Compromise (IoCs):** Extract any IPs, domains, or file paths hardcoded inside.
-                    
-                    CRITICAL RULE: Write your entire response strictly in {st.session_state['global_lang']}.
-                    """
-                    try:
-                        client = genai.Client(api_key=key)
-                        res_pandora = client.models.generate_content(model='gemini-2.5-flash', contents=pandora_prompt)
-                        # Save to memory
-                        st.session_state['pandora_result'] = res_pandora.text
-                    except Exception as e:
-                        st.error(f"PANDORA Error: {e}")
-            else:
-                st.warning(t("Paste code to analyze."))
+    with c_hunt2:
+        if target_to_hunt:
+            # Clean the target name for safe URL encoding
+            safe_target = urllib.parse.quote(str(target_to_hunt))
+            
+            with st.expander(f"Deploy Search Vectors for: {target_to_hunt}", expanded=True):
+                st.markdown("**1. Deep Web & Leaks (Google Dorks)**")
+                st.markdown(f"- [Search for Leaked Documents (PDF/DOCX)](https://www.google.com/search?q=ext:pdf+OR+ext:docx+%22{safe_target}%22+%22confidential%22+OR+%22internal%22)")
+                st.markdown(f"- [Search Open Directories](https://www.google.com/search?q=intitle:%22index+of%22+%22{safe_target}%22)")
+                st.markdown(f"- [Search Pastebin Dumps](https://www.google.com/search?q=site:pastebin.com+%22{safe_target}%22)")
                 
-        # Render Pandora result from memory
-        if st.session_state['pandora_result']:
-            st.error(f"### {t('PANDORA Reverse Engineering Report')}")
-            with st.container(border=True):
-                st.markdown(st.session_state['pandora_result'])
-            if st.button("Clear PANDORA Report"):
-                st.session_state['pandora_result'] = None
-                st.rerun()
+                st.markdown("**2. Social & Public Footprint**")
+                st.markdown(f"- [LinkedIn Cross-Reference](https://www.google.com/search?q=site:linkedin.com/in+%22{safe_target}%22)")
+                st.markdown(f"- [Twitter/X Advanced Search](https://twitter.com/search?q=%22{safe_target}%22&src=typed_query)")
+                st.markdown(f"- [Reddit Mention Tracker](https://www.reddit.com/search/?q=%22{safe_target}%22)")
+                
+                st.markdown("**3. Infrastructure & Cyber Intel (If Target is a Domain/IP)**")
+                st.markdown(f"- [Shodan (Exposed Ports & IoT)](https://www.shodan.io/search?query={safe_target})")
+                st.markdown(f"- [Censys (Certificates & Hosts)](https://search.censys.io/search?resource=hosts&q={safe_target})")
+                st.markdown(f"- [Wayback Machine (Deleted History)](https://web.archive.org/web/*/{safe_target}*)")
+        else:
+            st.info("Add targets to the Panopticon to use the Hunter Module.")
 
-    with c_pan2:
-        st.subheader(t("Network Log Analyzer (SIGINT)"))
-        network_logs = st.text_area(t("Paste Firewall / Syslog / PCAP Extract:"), height=250, placeholder="e.g., Jan 14 10:22:15 kernel: DROP IN=eth0 OUT= MAC=... SRC=192.168.1.5")
-        
-        if st.button(t("Run Intrusion Detection (IDS)"), type="primary"):
-            if network_logs:
-                with st.spinner(t("Hunting for Advanced Persistent Threats (APTs) in logs...")):
-                    log_prompt = f"""
-                    You are an elite Intrusion Detection System (IDS) and Threat Hunter AI.
-                    Analyze these network logs for cyber attacks:
-                    
-                    ```
-                    {network_logs[:15000]}
-                    ```
-                    
-                    Provide a "Network Intrusion Report" including:
-                    1. **Attack Vector:** What type of attack is happening? (e.g., DDoS, SQL Injection, Port Scan, Brute Force).
-                    2. **Target & Source:** Who is attacking and what are they aiming at?
-                    3. **Severity & Recommendation:** Rate the threat (Low/Medium/High/Critical) and suggest firewall rules to block it.
-                    
-                    CRITICAL RULE: Write your entire response strictly in {st.session_state['global_lang']}.
-                    """
-                    try:
-                        client = genai.Client(api_key=key)
-                        res_logs = client.models.generate_content(model='gemini-2.5-flash', contents=log_prompt)
-                        # Save to memory
-                        st.session_state['ids_result'] = res_logs.text
-                    except Exception as e:
-                        st.error(f"Log Analyzer Error: {e}")
-            else:
-                st.warning(t("Paste logs to analyze."))
+    # --- OPERATION MIDAS (CRYPTO-FORENSICS) ---
+    st.markdown("---")
+    st.subheader("Operation MIDAS: Crypto-Forensics & Dark Web Intel")
+    st.caption("Trace illicit financing. Enter a Crypto Wallet Address (BTC, ETH, USDT) to scan the surface and deep web for known affiliations, ransomware connections, or OFAC sanctions.")
+    
+    if 'midas_result' not in st.session_state: st.session_state['midas_result'] = None
+    if 'midas_target_mem' not in st.session_state: st.session_state['midas_target_mem'] = ""
+
+    wallet_address = st.text_input("Target Wallet Address:", placeholder="e.g., 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
+    
+    if st.button("Initiate Follow-the-Money Protocol", type="primary"):
+        if wallet_address:
+            with st.spinner("Scanning blockchain footprints and dark web intelligence..."):
+                midas_prompt = f"""
+                You are an elite Crypto-Forensic Analyst and Financial Intelligence AI (Operation MIDAS).
+                Target Cryptocurrency Wallet: "{wallet_address}"
                 
-        # Render IDS result from memory
-        if st.session_state['ids_result']:
-            st.warning(f"### {t('Network Intrusion Report')}")
-            with st.container(border=True):
-                st.markdown(st.session_state['ids_result'])
-            if st.button("Clear IDS Report"):
-                st.session_state['ids_result'] = None
-                st.rerun()
+                MISSION: Provide a complete "Deep Chronology" analysis. Do not just look for current data.
+                
+                TASK 1 - HISTORICAL ORIGIN: Scour the web for the first mention of this wallet in CYBERSECURITY BLOGS (e.g., Krebs on Security, FireEye, CrowdStrike) or GITHUB REPOS from 2017. Search specifically for 'WannaCry' and 'Lazarus Group' associations. If the address is hardcoded in known malware, you MUST report it as a 100% confirmed link.
+                
+                TASK 2 - CURRENT EVOLUTION: Search for recent (2024-2026) activity. Is it linked to Russian infrastructures (Aeza, Garantex), modern ransomware groups, or OFAC sanctions?
+                
+                Format the report as a "Master Financial Intelligence Dossier":
+                1. **Patient Zero & Historical Attribution**: (Origin, original owners, and first known criminal events).
+                2. **Operational Evolution**: (How the wallet's usage changed over the years and who uses it now).
+                3. **Known Affiliations & Sanctions**: (Detailed list of linked entities).
+                4. **Risk Score (0-100)**: (Justify based on the entire lifespan of the wallet).
+                
+                CRITICAL RULE: NEVER write "Okay, I understand", "I will search", or any other introductory text.
+                CRITICAL RULE: Output the dossier IMMEDIATELY.
+                CRITICAL RULE: Write your entire dossier strictly in {st.session_state['global_lang']}.
+                CRITICAL RULE: Do not ignore the past in favor of the present. If it started with WannaCry, it MUST be the first point of the report.
+                """
+                try:
+                    client = genai.Client(api_key=key)
+                    config_tools = types.GenerateContentConfig(tools=[{"google_search": {}}])
+                    res_midas = client.models.generate_content(
+                        model='gemini-2.0-flash', 
+                        contents=midas_prompt,
+                        config=config_tools
+                    )
+                    st.session_state['midas_result'] = res_midas.text
+                    st.session_state['midas_target_mem'] = wallet_address
+                except Exception as e:
+                    st.error(f"MIDAS Encountered an error during scan: {e}")
+        else:
+            st.warning("Please enter a valid wallet address.")
+            
+    if st.session_state['midas_result']:
+        st.success(f"### Crypto-Forensic Dossier Compiled for: {st.session_state['midas_target_mem'][:8]}...")
+        with st.container(border=True):
+            st.markdown(st.session_state['midas_result'])
+        if st.button("Clear MIDAS Scan"):
+            st.session_state['midas_result'] = None
+            st.rerun()
+
+    # --- OPERATION CERBERUS (DATA BREACH SCANNER) ---
+    st.markdown("---")
+    st.subheader("Operation CERBERUS: Dark Web & Breach Footprint")
+    st.caption("Search for compromised credentials. Enter an Email, Username, or Phone Number to scan historical data leaks and pastebin dumps via surface/deep web indexing.")
+    
+    if 'cerb_result' not in st.session_state: st.session_state['cerb_result'] = None
+    if 'cerb_target_mem' not in st.session_state: st.session_state['cerb_target_mem'] = ""
+    
+    cerberus_target = st.text_input("Target Identity (Email/Username):", placeholder="e.g., target@email.com or @DarkHacker99")
+    
+    if st.button("Unleash CERBERUS", type="primary"):
+        if cerberus_target:
+            with st.spinner("Scouring known breach databases and leak forums..."):
+                cerb_prompt = f"""
+                You are Operation CERBERUS, an elite Cyber Intelligence AI.
+                Target Identity: "{cerberus_target}"
+                
+                Using your Google Search capabilities, search for mentions of this identity in relation to "data breach", "leak", "pastebin", "dump", or "hacked".
+                
+                CRITICAL INSTRUCTION: DO NOT INVENT OR HALLUCINATE DATA. If the target does not exist or has no known breaches, state clearly: "Target not found in any public breach databases. No compromise detected."
+                
+                If real data IS found, format the report exactly with:
+                1. **Likely compromised platforms/services:**
+                2. **Risk of credential stuffing or identity theft:**
+                3. **Recommended OPSEC remediation:**
+                
+                CRITICAL RULE: NEVER write "Okay, I will search" or any meta-commentary. Output the report IMMEDIATELY.
+                CRITICAL RULE: Write your entire response strictly in {st.session_state['global_lang']}.
+                """
+                try:
+                    client = genai.Client(api_key=key)
+                    config_tools = types.GenerateContentConfig(tools=[{"google_search": {}}])
+                    res_cerb = client.models.generate_content(model='gemini-2.0-flash', contents=cerb_prompt, config=config_tools)
+                    
+                    st.session_state['cerb_result'] = res_cerb.text
+                    st.session_state['cerb_target_mem'] = cerberus_target
+                except Exception as e:
+                    st.error(f"CERBERUS Error: {e}")
+        else:
+            st.warning("Please enter a target identity.")
+
+    if st.session_state['cerb_result']:
+        st.error(f"### CERBERUS Footprint Scan Complete for: {st.session_state['cerb_target_mem']}")
+        with st.container(border=True):
+            st.markdown(st.session_state['cerb_result'])
+        if st.button("Clear CERBERUS Scan"):
+            st.session_state['cerb_result'] = None
+            st.rerun()
+        
+    # --- OPERATION WATCHER (AUTONOMOUS OSINT AGENT) ---
+    st.markdown("---")
+    st.subheader("Operation WATCHER: Autonomous OSINT Agent")
+    st.caption("Deploy an AI agent with live internet access to gather real-time intelligence, recent news, and digital footprint analysis on any target.")
+    
+    watcher_target = st.text_input("Enter Target for Live Reconnaissance:", placeholder="e.g., CyberCorp, John Doe, APT28")
+    
+    if st.button("Deploy Watcher Agent", type="primary"):
+        if not watcher_target:
+            st.warning("Please specify a target for the Watcher Agent.")
+        else:
+            with st.spinner(f"Agent deployed. Scouring the surface web for '{watcher_target}'..."):
+                watcher_prompt = f"""
+                You are "WATCHER", an elite autonomous OSINT agent. 
+                Your mission is to gather the most up-to-date and critical intelligence on the following target: "{watcher_target}".
+                
+                Using your Google Search capabilities, find:
+                1. Recent news, controversies, or legal issues.
+                2. Known affiliations, aliases, or associated organizations.
+                3. Digital footprint (social media presence, leaked data, known domains).
+                
+                CRITICAL RULE: NEVER write introductory meta-commentary. Output the Live OSINT Dossier IMMEDIATELY.
+                CRITICAL RULE: Write your entire dossier strictly in {st.session_state['global_lang']}.
+                Format the output as a highly tactical "Live OSINT Dossier" with bullet points. Cite your sources with URLs where possible.
+                """
+                try:
+                    client = genai.Client(api_key=key)
+                    config_tools = types.GenerateContentConfig(
+                        tools=[{"google_search": {}}]
+                    )
+                    watcher_res = client.models.generate_content(
+                        model='gemini-2.0-flash', 
+                        contents=watcher_prompt,
+                        config=config_tools
+                    )
+                    st.success(f"Live Dossier compiled for: {watcher_target}")
+                    
+                    # Display the intelligence report
+                    with st.container(border=True):
+                        st.markdown(watcher_res.text)
+                        
+                    # Add a quick button to save this entity to the Panopticon if not already there
+                    if watcher_target not in target_list:
+                        st.info("Target is not in your Panopticon Watchlist. Would you like to log it?")
+                        with st.form("add_watcher_target_form"):
+                            new_risk = st.slider("Assign Threat Score", 0, 100, 50)
+                            new_type = st.selectbox("Assign Classification", ["Unknown Entity", "High-Value Target", "Corporate Entity", "Cyber Threat"])
+                            if st.form_submit_button("Log Target to Database"):
+                                save_to_panopticon(watcher_target, new_risk, new_type)
+                                st.success(f"{watcher_target} added to persistent database. Reloading...")
+                                time.sleep(1)
+                                st.rerun()
+                                
+                except Exception as e:
+                    st.error(f"Watcher Agent encountered an error: {e}")
+
+    # --- OPERATION SIREN (ADVERSARIAL EMULATION) ---
+    st.markdown("---")
+    st.subheader("Operation SIREN: Adversarial Emulation (Red Teaming)")
+    st.caption("Generate a psychological cyber-attack vector tailored to a specific target's vulnerabilities.")
+    
+    if 'siren_result' not in st.session_state: st.session_state['siren_result'] = None
+    if 'siren_target_mem' not in st.session_state: st.session_state['siren_target_mem'] = ""
+    
+    c_siren1, c_siren2 = st.columns(2)
+    with c_siren1:
+        siren_target = st.selectbox("Select Target for SIREN Protocol:", target_list, key="siren_target_sel")
+    with c_siren2:
+        siren_context = st.text_input("Pretext / Vulnerability:", placeholder="e.g., 'Target loves crypto', 'Fake HR complaint'")
+    
+    if st.button("Generate Attack Vector (SIREN)", type="primary"):
+        if siren_target and siren_context:
+            with st.spinner("Crafting psychological payload..."):
+                siren_prompt = f"""
+                You are Operation SIREN, a Red Team Social Engineering AI.
+                Target: {siren_target}
+                Pretext: {siren_context}
+                Draft a highly convincing, targeted Spear-Phishing email/message designed to manipulate the target.
+                CRITICAL RULE: Write strictly in {st.session_state['global_lang']}.
+                """
+                try:
+                    client = genai.Client(api_key=key)
+                    res_siren = client.models.generate_content(model='gemini-2.5-flash', contents=siren_prompt)
+                    st.session_state['siren_result'] = res_siren.text
+                    st.session_state['siren_target_mem'] = siren_target
+                except Exception as e:
+                    st.error(f"SIREN Error: {e}")
+        else:
+            st.warning("Please select a target (from DB) and provide a pretext.")
+            
+    if st.session_state['siren_result']:
+        st.error(f"### SIREN Payload: {st.session_state['siren_target_mem']}")
+        with st.container(border=True):
+            st.markdown(st.session_state['siren_result'])
+        if st.button("Clear SIREN Payload"):
+            st.session_state['siren_result'] = None
+            st.rerun()
+    
+    # --- OPERATION ECHO (BEHAVIORAL TARGET CLONING) ---
+    st.markdown("---")
+    st.subheader("Operation ECHO: Behavioral Target Cloning")
+    st.caption("Spawn a simulated interactive AI clone of a selected target based on their known Panopticon profile.")
+    
+    if 'echo_result' not in st.session_state: st.session_state['echo_result'] = None
+    if 'echo_target_mem' not in st.session_state: st.session_state['echo_target_mem'] = ""
+    
+    c_echo1, c_echo2 = st.columns(2)
+    with c_echo1:
+        echo_target = st.selectbox("Select Target to Clone:", target_list, key="echo_target_sel")
+    with c_echo2:
+        echo_question = st.text_input("Interrogate the Clone (What do you say/ask?):", placeholder="e.g., 'We have your hard drives. Will you cooperate?'")
+        
+    if st.button("Initialize ECHO Simulation", type="primary"):
+        if echo_target and echo_question:
+            with st.spinner(f"Cloning cognitive patterns of {echo_target}..."):
+                target_info = df_panopticon[df_panopticon['agent_id'] == echo_target].iloc[0]
+                echo_prompt = f"""
+                You are Operation ECHO, a Behavioral Profiling AI ROLEPLAYING as {echo_target}.
+                Threat Score: {target_info['risk_score']}/100. Classification: {target_info['threat_type']}.
+                Interrogator asks: "{echo_question}"
+                Respond IN CHARACTER. Write strictly in {st.session_state['global_lang']}.
+                """
+                try:
+                    client = genai.Client(api_key=key)
+                    res_echo = client.models.generate_content(model='gemini-2.5-flash', contents=echo_prompt)
+                    st.session_state['echo_result'] = res_echo.text
+                    st.session_state['echo_target_mem'] = echo_target
+                except Exception as e:
+                    st.error(f"ECHO Error: {e}")
+        else:
+            st.warning("Please select a target and enter a prompt.")
+            
+    if st.session_state['echo_result']:
+        st.warning(f"### ECHO Clone Responding: [{st.session_state['echo_target_mem']}]")
+        with st.container(border=True):
+            st.markdown(st.session_state['echo_result'])
+        if st.button("Terminate ECHO Link"):
+            st.session_state['echo_result'] = None
+            st.rerun()
+
+    # --- OPERATION PROMETHEUS (DE-ANONYMIZATION) ---
+    st.markdown("---")
+    st.subheader("Operation PROMETHEUS: Stylometric De-Anonymization")
+    st.caption("Paste an anonymous text/manifesto. The AI will cross-reference it with a known target via web scraping.")
+    
+    if 'prom_result' not in st.session_state: st.session_state['prom_result'] = None
+    if 'prom_target_mem' not in st.session_state: st.session_state['prom_target_mem'] = ""
+    
+    c_prom1, c_prom2 = st.columns([1, 2])
+    with c_prom1:
+        prom_target = st.selectbox("Compare against Target:", target_list, key="prom_target_sel")
+    with c_prom2:
+        anon_text = st.text_area("Paste Anonymous Text:", placeholder="e.g., 'The system is flawed. We will strike at dawn...'")
+        
+    if st.button("Run PROMETHEUS Match", type="primary"):
+        if prom_target and anon_text:
+            with st.spinner(f"Extracting linguistic DNA for {prom_target}..."):
+                prom_prompt = f"""
+                You are Operation PROMETHEUS, a Forensic Linguistics AI.
+                ANONYMOUS TEXT: "{anon_text}"
+                Compare against known public writings of: "{prom_target}".
+                Provide MATCH PROBABILITY. Write strictly in {st.session_state['global_lang']}.
+                """
+                try:
+                    client = genai.Client(api_key=key)
+                    config_tools = types.GenerateContentConfig(tools=[{"google_search": {}}])
+                    res_prom = client.models.generate_content(model='gemini-2.0-flash', contents=prom_prompt, config=config_tools)
+                    st.session_state['prom_result'] = res_prom.text
+                    st.session_state['prom_target_mem'] = prom_target
+                except Exception as e:
+                    st.error(f"PROMETHEUS Error: {e}")
+        else:
+            st.warning("Please select a target and paste text.")
+            
+    if st.session_state['prom_result']:
+        st.error(f"### PROMETHEUS Match Analysis: {st.session_state['prom_target_mem']}")
+        with st.container(border=True):
+            st.markdown(st.session_state['prom_result'])
+        if st.button("Clear PROMETHEUS Intel"):
+            st.session_state['prom_result'] = None
+            st.rerun()
+    
+    # --- OPERATION M.I.C.E. (HUMINT ASSET RECRUITMENT) ---
+    st.markdown("---")
+    st.subheader("Operation M.I.C.E.: HUMINT Asset Recruitment")
+    st.caption("Generate a psychological recruitment and manipulation manual (Money, Ideology, Compromise, Ego).")
+    
+    if 'mice_result' not in st.session_state: st.session_state['mice_result'] = None
+    if 'mice_target_mem' not in st.session_state: st.session_state['mice_target_mem'] = ""
+    
+    mice_target = st.selectbox("Select Target to Profile for Recruitment:", target_list, key="mice_target_sel")
+    
+    if st.button("Generate M.I.C.E. Dossier", type="primary"):
+        if mice_target:
+            with st.spinner(f"Extracting psychological vulnerabilities for {mice_target}..."):
+                target_info = df_panopticon[df_panopticon['agent_id'] == mice_target].iloc[0]
+                mice_prompt = f"""
+                You are an elite CIA/KGB HUMINT Recruiter. Target: {mice_target}.
+                Draft a M.I.C.E. "Asset Recruitment Manual". Write strictly in {st.session_state['global_lang']}.
+                """
+                try:
+                    client = genai.Client(api_key=key)
+                    res_mice = client.models.generate_content(model='gemini-2.5-flash', contents=mice_prompt)
+                    st.session_state['mice_result'] = res_mice.text
+                    st.session_state['mice_target_mem'] = mice_target
+                except Exception as e:
+                    st.error(f"M.I.C.E. Error: {e}")
+        else:
+             st.warning("Please select a target.")
+                    
+    if st.session_state['mice_result']:
+        st.warning(f"### M.I.C.E. Manual: {st.session_state['mice_target_mem']}")
+        with st.container(border=True):
+            st.markdown(st.session_state['mice_result'])
+        if st.button("Clear M.I.C.E. Dossier"):
+            st.session_state['mice_result'] = None
+            st.rerun()
+
+    # --- OPERATION OMNISCIENCE (CROSS-PLATFORM FOOTPRINTING) ---
+    st.markdown("---")
+    st.subheader("Operation OMNISCIENCE: Identity Footprinting")
+    st.caption("Enter a pseudonym, handle, or email. Scour the web to trace digital footprints.")
+    
+    if 'omni_result' not in st.session_state: st.session_state['omni_result'] = None
+    if 'omni_target_mem' not in st.session_state: st.session_state['omni_target_mem'] = ""
+    
+    omni_target = st.text_input("Target Handle / Pseudonym / Email:", placeholder="e.g., DarkCoder99 or john.doe@example.com")
+    
+    if st.button("Initiate OMNISCIENCE Trace", type="primary"):
+        if omni_target:
+            with st.spinner(f"Scouring global indexes for {omni_target}..."):
+                omni_prompt = f"""
+                You are Operation OMNISCIENCE, an elite OSINT Footprinting AI.
+                TARGET: "{omni_target}"
+                
+                Using your Google Search capabilities, trace this digital footprint. 
+                CRITICAL INSTRUCTION: DO NOT INVENT OR HALLUCINATE DATA. If the target does not exist or has no public footprint, state clearly: "Target not found. No digital footprint available."
+                
+                If real data IS found, format the report exactly with these sections:
+                1. **Known Aliases & Platforms:**
+                2. **Associated Emails/Breaches:**
+                3. **Behavioral Footprint:**
+                4. **Threat Assessment:**
+                
+                CRITICAL RULE: NEVER write introductory meta-commentary (e.g., 'Okay', 'I will search'). Output the dossier IMMEDIATELY. Write strictly in {st.session_state['global_lang']}.
+                """
+                try:
+                    client = genai.Client(api_key=key)
+                    config_tools = types.GenerateContentConfig(tools=[{"google_search": {}}])
+                    res_omni = client.models.generate_content(model='gemini-2.0-flash', contents=omni_prompt, config=config_tools)
+                    
+                    st.session_state['omni_result'] = res_omni.text
+                    st.session_state['omni_target_mem'] = omni_target
+                except Exception as e:
+                    st.error(f"OMNISCIENCE Error: {e}")
+        else:
+            st.warning("Please enter a target identifier.")
+            
+    if st.session_state['omni_result']:
+        st.error(f"### OMNISCIENCE Dossier: {st.session_state['omni_target_mem']}")
+        with st.container(border=True):
+            st.markdown(st.session_state['omni_result'])
+        if st.button("Clear OMNISCIENCE Intel"):
+            st.session_state['omni_result'] = None
+            st.rerun()
+
+    # --- OPERATION WENDIGO (AUTONOMOUS WEB AGENT) ---
+    st.markdown("---")
+    st.subheader("Operation WENDIGO: Autonomous Deep Web Agent")
+    st.caption("Deploy an autonomous AI agent to deeply investigate a target, bypass surface-level info, and extract a comprehensive intelligence dossier.")
+
+    if 'wendigo_result' not in st.session_state: st.session_state['wendigo_result'] = None
+    if 'wendigo_target_mem' not in st.session_state: st.session_state['wendigo_target_mem'] = ""
+
+    wendigo_target = st.text_input("Target Entity / Domain to Infiltrate:", placeholder="e.g., suspected-scam-site.com or 'John Doe'")
+
+    if st.button("Deploy WENDIGO Agent", type="primary"):
+        if wendigo_target:
+            with st.spinner(f"Agent WENDIGO is navigating the web, analyzing data structures for {wendigo_target}..."):
+                wendigo_prompt = f"""
+                You are Operation WENDIGO, an elite Autonomous Web Intelligence Agent.
+                TARGET: "{wendigo_target}"
+
+                Using your Google Search grounding capabilities, perform a deep-dive OSINT investigation.
+                Go beyond the surface. Look for:
+                1. Associated entities, domains, or infrastructure.
+                2. Hidden affiliations, past controversies, or historical data.
+                3. Potential vulnerabilities or exposed information.
+
+                Format as a "Deep OSINT Dossier".
+                CRITICAL RULE: NEVER write introductory meta-commentary. Output the report IMMEDIATELY.
+                CRITICAL RULE: Write strictly in {st.session_state['global_lang']}.
+                """
+                try:
+                    client = genai.Client(api_key=key)
+                    config_tools = types.GenerateContentConfig(tools=[{"google_search": {}}])
+                    res_wendigo = client.models.generate_content(model='gemini-2.0-flash', contents=wendigo_prompt, config=config_tools)
+                    
+                    st.session_state['wendigo_result'] = res_wendigo.text
+                    st.session_state['wendigo_target_mem'] = wendigo_target
+                except Exception as e:
+                    st.error(f"WENDIGO Error: {e}")
+        else:
+            st.warning("Please specify a target for WENDIGO.")
+
+    if st.session_state['wendigo_result']:
+        st.error(f"### WENDIGO Deep Dossier: {st.session_state['wendigo_target_mem']}")
+        with st.container(border=True):
+            st.markdown(st.session_state['wendigo_result'])
+        if st.button("Recall WENDIGO Agent"):
+            st.session_state['wendigo_result'] = None
+            st.rerun()
+
+    # --- OPERATION LAZARUS (FININT & DE-OFFSHORING) ---
+    st.markdown("---")
+    st.subheader("Operation LAZARUS: FININT & Corporate De-Offshoring")
+    st.caption("Financial Intelligence (FININT). Enter a Shell Company or individual to trace Ultimate Beneficial Owners (UBOs) and offshore links.")
+
+    if 'lazarus_result' not in st.session_state: st.session_state['lazarus_result'] = None
+    if 'lazarus_target_mem' not in st.session_state: st.session_state['lazarus_target_mem'] = ""
+
+    lazarus_target = st.text_input("Shell Company / Target Entity:", placeholder="e.g., 'Mossack Fonseca', 'Global Trading LTD'")
+
+    if st.button("Initiate LAZARUS Trace", type="primary"):
+        if lazarus_target:
+            with st.spinner(f"Interrogating global corporate registries and offshore leaks for {lazarus_target}..."):
+                lazarus_prompt = f"""
+                You are Operation LAZARUS, an elite Financial Intelligence (FININT) AI.
+                TARGET ENTITY: "{lazarus_target}"
+
+                Using your Google Search capabilities, scour corporate registries, offshore leak databases (like Panama Papers, Pandora Papers), and financial news to de-anonymize this entity.
+
+                Provide a "FININT De-Offshoring Report" including:
+                1. Known Jurisdictions (e.g., BVI, Cayman Islands, Cyprus).
+                2. Suspected Ultimate Beneficial Owners (UBOs) or Proxy Directors.
+                3. Corporate Network Graph (Linked companies and subsidiaries).
+                4. Financial Risk Assessment (Money laundering flags, sanctions evasion).
+
+                CRITICAL RULE: NEVER write introductory meta-commentary (e.g., 'Okay', 'I will analyze'). Output the report IMMEDIATELY.
+                CRITICAL RULE: Write your entire response strictly in {st.session_state['global_lang']}.
+                """
+                try:
+                    client = genai.Client(api_key=key)
+                    config_tools = types.GenerateContentConfig(tools=[{"google_search": {}}])
+                    res_lazarus = client.models.generate_content(model='gemini-2.0-flash', contents=lazarus_prompt, config=config_tools)
+                    
+                    st.session_state['lazarus_result'] = res_lazarus.text
+                    st.session_state['lazarus_target_mem'] = lazarus_target
+                except Exception as e:
+                    st.error(f"LAZARUS Error: {e}")
+        else:
+            st.warning("Please enter a corporate target.")
+
+    if st.session_state['lazarus_result']:
+        st.success(f"### LAZARUS FININT Report: {st.session_state['lazarus_target_mem']}")
+        with st.container(border=True):
+            st.markdown(st.session_state['lazarus_result'])
+        if st.button("Clear LAZARUS Trace"):
+            st.session_state['lazarus_result'] = None
+            st.rerun()
+
+    # --- OPERATION DOPPELGÄNGER (VOICE CLONING / VISHING) ---
+    st.markdown("---")
+    st.subheader("Operation DOPPELGÄNGER: Voice Cloning / Vishing Matrix")
+    st.caption("Generate a psychological script for an AI Voice Clone (Deepfake) to execute a targeted phone-based social engineering attack (Vishing).")
+
+    if 'doppel_result' not in st.session_state: st.session_state['doppel_result'] = None
+    if 'doppel_target_mem' not in st.session_state: st.session_state['doppel_target_mem'] = ""
+
+    c_dop1, c_dop2 = st.columns(2)
+    with c_dop1:
+        doppel_target = st.selectbox("Select Target to Attack:", target_list, key="doppel_target_sel")
+    with c_dop2:
+        doppel_scenario = st.text_input("Vishing Scenario:", placeholder="e.g., 'IT Support calling about a compromised password'")
+
+    if st.button("Generate Vishing Script", type="primary"):
+        if doppel_target and doppel_scenario:
+            with st.spinner(f"Crafting psychological voice-script for {doppel_target}..."):
+                target_info = df_panopticon[df_panopticon['agent_id'] == doppel_target].iloc[0]
+                doppel_prompt = f"""
+                You are Operation DOPPELGÄNGER, an elite Social Engineering AI specializing in Vishing (Voice Phishing).
+                Target: {doppel_target} (Risk Score: {target_info['risk_score']})
+                Scenario: {doppel_scenario}
+
+                Draft a highly convincing, conversational script designed to be read by an AI Voice Clone of a trusted authority figure (e.g., CEO, IT Admin).
+                Include:
+                1. **Caller Persona:** Who the voice clone is pretending to be.
+                2. **The Script:** The exact dialogue, including pauses [pause] and simulated human imperfections [sigh], [clear throat] to make the deepfake sound real.
+                3. **The Trap:** The exact moment the target is asked to reveal the credential or execute the action.
+
+                CRITICAL RULE: NEVER write introductory meta-commentary. Output the report IMMEDIATELY.
+                CRITICAL RULE: Write your entire response strictly in {st.session_state['global_lang']}.
+                """
+                try:
+                    client = genai.Client(api_key=key)
+                    res_doppel = client.models.generate_content(model='gemini-2.5-flash', contents=doppel_prompt)
+                    
+                    st.session_state['doppel_result'] = res_doppel.text
+                    st.session_state['doppel_target_mem'] = doppel_target
+                except Exception as e:
+                    st.error(f"DOPPELGÄNGER Error: {e}")
+        else:
+            st.warning("Please select a target and provide a scenario.")
+
+    if st.session_state['doppel_result']:
+        st.error(f"### DOPPELGÄNGER Script: {st.session_state['doppel_target_mem']}")
+        with st.container(border=True):
+            st.markdown(st.session_state['doppel_result'])
+        if st.button("Clear DOPPELGÄNGER Intel"):
+            st.session_state['doppel_result'] = None
+            st.rerun()
+
+    # --- OPERATION MIRAGE (SYNTHETIC IDENTITY GENERATOR) ---
+    st.markdown("---")
+    st.subheader("Operation MIRAGE: Synthetic Identity Forge")
+    st.caption("Generate a fully fleshed-out synthetic identity (Sockpuppet) for undercover OSINT operations, complete with image generation prompts.")
+
+    if 'mirage_result' not in st.session_state: st.session_state['mirage_result'] = None
+    if 'mirage_target_mem' not in st.session_state: st.session_state['mirage_target_mem'] = ""
+
+    mirage_role = st.text_input("Desired Persona / Role:", placeholder="e.g., 'Disgruntled System Administrator at a Tech Firm' or 'Radical Crypto Activist'")
+
+    if st.button("Forge Synthetic Identity", type="primary"):
+        if mirage_role:
+            with st.spinner(f"Generating synthetic psychological profile and back-story for '{mirage_role}'..."):
+                mirage_prompt = f"""
+                You are Operation MIRAGE, an elite Undercover Identity Generator.
+                Create a comprehensive synthetic identity (sockpuppet) for this role: "{mirage_role}".
+
+                Provide a "Synthetic Identity Dossier" including:
+                1. **Basic Info:** Full Name, Age, Location, Job Title.
+                2. **Psychological Profile:** Likes, dislikes, political/social views, hobbies, and typing quirks (e.g., "uses too many ellipses", "never capitalizes").
+                3. **Backstory:** A brief, highly believable life story and reason for being in this role.
+                4. **Image Generation Prompt:** A highly detailed prompt in English (Midjourney/DALL-E style) to generate a photorealistic avatar for this person (e.g., "A selfie of a tired 35-year-old IT worker, fluorescent lighting, smartphone camera, highly detailed --ar 1:1").
+
+                CRITICAL RULE: NEVER write introductory meta-commentary. Output the report IMMEDIATELY.
+                CRITICAL RULE: Write sections 1-3 strictly in {st.session_state['global_lang']}. Section 4 must be in English for the image generator.
+                """
+                try:
+                    client = genai.Client(api_key=key)
+                    res_mirage = client.models.generate_content(model='gemini-2.5-flash', contents=mirage_prompt)
+                    
+                    st.session_state['mirage_result'] = res_mirage.text
+                    st.session_state['mirage_target_mem'] = mirage_role
+                except Exception as e:
+                    st.error(f"MIRAGE Error: {e}")
+        else:
+            st.warning("Please specify a desired persona/role.")
+
+    if st.session_state['mirage_result']:
+        st.success(f"### MIRAGE Identity: {st.session_state['mirage_target_mem']}")
+        with st.container(border=True):
+            st.markdown(st.session_state['mirage_result'])
+        if st.button("Burn Identity (Clear MIRAGE)"):
+            st.session_state['mirage_result'] = None
+            st.rerun()
+
+    # --- OPERATION ATLAS (3D GEO-INTELLIGENCE) ---
+    st.markdown("---")
+    st.subheader("Operation ATLAS: 3D Geo-Intelligence Globe")
+    st.caption("Deploy a holographic tracking system. Enter an IP address, a server facility, or a physical target to triangulate coordinates and assess localized threat levels.")
+
+    if 'atlas_result' not in st.session_state: st.session_state['atlas_result'] = None
+    if 'atlas_target_mem' not in st.session_state: st.session_state['atlas_target_mem'] = ""
+    if 'atlas_coords' not in st.session_state: st.session_state['atlas_coords'] = None
+
+    atlas_target = st.text_input("Target Location / IP / Infrastructure:", placeholder="e.g., '198.51.100.14', 'Kremlin, Moscow', or 'Three Gorges Dam'")
+
+    if st.button("Initiate ATLAS Triangulation", type="primary"):
+        if atlas_target:
+            with st.spinner(f"Pinging global satellites and triangulating position for '{atlas_target}'..."):
+                atlas_prompt = f"""
+                You are Operation ATLAS, a Tier-1 Geospatial Intelligence (GEOINT) AI.
+                TARGET: "{atlas_target}"
+
+                Deduce or simulate the exact geographic coordinates of this target based on public intelligence or IP geolocation databases.
+                Assess the strategic value or threat level of this location.
+
+                CRITICAL RULE: Return ONLY a valid JSON object. Do not include markdown or outside text.
+                Format:
+                {{
+                    "location_name": "City, Country",
+                    "lat": 0.0000,
+                    "lon": 0.0000,
+                    "threat_level": 85,
+                    "analysis": "Brief tactical analysis of this location."
+                }}
+                Make sure the analysis is written in {st.session_state['global_lang']}.
+                """
+                try:
+                    client = genai.Client(api_key=key)
+                    res_atlas = client.models.generate_content(model='gemini-2.5-flash', contents=atlas_prompt)
+                    atlas_json = extract_json(res_atlas.text)
+                    
+                    if atlas_json and 'lat' in atlas_json and 'lon' in atlas_json:
+                        st.session_state['atlas_result'] = atlas_json
+                        st.session_state['atlas_target_mem'] = atlas_target
+                        
+                        lat_val = atlas_json['lat'][0] if isinstance(atlas_json['lat'], list) else atlas_json['lat']
+                        lon_val = atlas_json['lon'][0] if isinstance(atlas_json['lon'], list) else atlas_json['lon']
+                        st.session_state['atlas_coords'] = (float(lat_val), float(lon_val))
+                    else:
+                        st.error("ATLAS could not lock onto valid coordinates.")
+                        
+                except Exception as e:
+                    st.error(f"ATLAS Error: {e}")
+        else:
+            st.warning("Please provide a target to triangulate.")
+
+    if st.session_state['atlas_result'] and st.session_state['atlas_coords']:
+        a_data = st.session_state['atlas_result']
+        lat, lon = st.session_state['atlas_coords']
+        
+        st.success(f"### ATLAS Lock Confirmed: {st.session_state['atlas_target_mem']}")
+        
+        hq_lat, hq_lon, hq_city = st.session_state['hq_coords']
+        
+        df_globe = pd.DataFrame({
+            'lat': [lat, hq_lat], 
+            'lon': [lon, hq_lon],
+            'name': [a_data.get('location_name', 'Target'), f'HQ ({hq_city})'],
+            'size': [a_data.get('threat_level', 50) / 2, 10],
+            'color': ['red', 'blue']
+        })
+        
+        fig_globe = px.scatter_geo(
+            df_globe, 
+            lat="lat", lon="lon", 
+            hover_name="name", 
+            size="size",
+            color="color",
+            color_discrete_map={'red':'#EF4444', 'blue':'#38BDF8'},
+            projection="orthographic"
+        )
+        
+        fig_globe.add_trace(go.Scattergeo(
+            lat=[hq_lat, lat],
+            lon=[hq_lon, lon],
+            mode='lines',
+            line=dict(width=2, color='#EF4444'),
+            hoverinfo='none'
+        ))
+
+        fig_globe.update_layout(
+            showlegend=False,
+            geo=dict(
+                showframe=False, showcoastlines=True, showcountries=True,
+                coastlinecolor="#334155", countrycolor="#334155",
+                showocean=True, oceancolor='rgba(10, 15, 30, 1)',
+                lakecolor='rgba(10, 15, 30, 1)',
+                landcolor='rgba(2, 6, 23, 1)',
+                bgcolor='rgba(0,0,0,0)',
+                projection_rotation=dict(lon=lon, lat=lat, roll=0)
+            ),
+            paper_bgcolor='rgba(0,0,0,0)',
+            margin=dict(l=0, r=0, t=0, b=0),
+            height=400
+        )
+        
+        c_atl1, c_atl2 = st.columns([2, 1])
+        with c_atl1:
+            st.plotly_chart(fig_globe, use_container_width=True)
+        with c_atl2:
+            st.info(f"**Location:** {a_data.get('location_name', 'Unknown')}\n\n**Coordinates:** {lat:.4f}, {lon:.4f}\n\n**Threat Level:** {a_data.get('threat_level', 'N/A')}/100")
+            st.markdown(f"*{a_data.get('analysis', 'No analysis provided.')}*")
+            
+        if st.button("Clear ATLAS Tracking"):
+            st.session_state['atlas_result'] = None
+            st.session_state['atlas_coords'] = None
+            st.rerun()
+
+    # --- OPERATION ARACHNE (MASTER KNOWLEDGE GRAPH) ---
+    st.markdown("---")
+    st.subheader("Operation ARACHNE: Master Link Analysis")
+    st.caption("Visualizes all targets, identities, and infrastructures currently locked in your active session memory into a single web of intelligence.")
+    
+    if st.button("Generate Master Knowledge Graph", type="primary"):
+        with st.spinner("Connecting scattered intelligence points..."):
+            nodes = [Node(id="HQ", label="COMMAND HQ", size=40, color="#10B981", symbolType="star", font={'color': 'white'})]
+            edges = []
+            added_nodes = {"HQ"}
+            
+            op_map = {
+                'wt_target_mem': ('WATCHTOWER (Kinetic)', '#38BDF8'),
+                'cyclops_target_mem': ('CYCLOPS (IoT)', '#EF4444'),
+                'daedalus_target_mem': ('DAEDALUS (Honeypot)', '#F59E0B'),
+                'kraken_target_mem': ('KRAKEN (APT)', '#EF4444'),
+                'midas_target_mem': ('MIDAS (Crypto)', '#F59E0B'),
+                'mirage_target_mem': ('MIRAGE (Identity)', '#8B5CF6'),
+                'wendigo_target_mem': ('WENDIGO (Deep Web)', '#64748B'),
+                'atlas_target_mem': ('ATLAS (GEOINT)', '#38BDF8')
+            }
+            
+            for state_key, (op_label, op_color) in op_map.items():
+                target = st.session_state.get(state_key)
+                if target:
+                    op_id = f"OP_{state_key}"
+                    if op_id not in added_nodes:
+                        nodes.append(Node(id=op_id, label=op_label, size=25, color=op_color, font={'color': 'white', 'size': 10}))
+                        edges.append(Edge(source="HQ", target=op_id, color="rgba(255,255,255,0.2)"))
+                        added_nodes.add(op_id)
+                    
+                    if target not in added_nodes:
+                        nodes.append(Node(id=target, label=str(target), size=20, color="#334155", font={'color': 'white'}))
+                        edges.append(Edge(source=op_id, target=target, color="rgba(255,255,255,0.5)"))
+                        added_nodes.add(target)
+                        
+            if len(nodes) > 1:
+                config = Config(width="100%", height=500, directed=True, physics=True, hierarchical=False, nodeHighlightBehavior=True, highlightColor="#EF4444")
+                agraph(nodes=nodes, edges=edges, config=config)
+            else:
+                st.warning("No active operations found in memory. Run some tools first (like Midas, Atlas, or Watchtower) to build the graph.") 
 
 # ==========================================
 # MODULE 9: BATTLEFIELD FORENSICS (VULCAN)
@@ -5722,6 +5691,7 @@ elif mode == t("9. Battlefield Forensics (VULCAN)"):
                 3. **Combatants (Uniforms/Patches):** Analyze camouflage patterns, tactical gear, or insignia to estimate unit affiliation (e.g., regular army, PMC, insurgents).
                 4. **Ballistic Damage Assessment:** If there are craters or destroyed structures, estimate the direction of impact and the likely caliber/yield of the weapon used.
 
+                CRITICAL RULE: NEVER write introductory meta-commentary. Output the report IMMEDIATELY.
                 CRITICAL RULE: Write your entire response strictly in {st.session_state['global_lang']}. Act highly professional and objective.
                 """
                 try:
@@ -5828,7 +5798,15 @@ elif mode == t("10. Flow of Funds (HAWKEYE)"):
                     added_nodes_h.add(tgt)
                 
                 edge_label = f"${amt} ({flag})"
-                edges_h.append(Edge(source=src, target=tgt, label=edge_label, color="#F59E0B", font={'color': '#F59E0B', 'size': 10}))
+                edges_h.append(Edge(
+                    source=src, target=tgt, label=edge_label, 
+                    color="rgba(245, 158, 11, 0.6)",
+                    font={
+                        'color': '#FFFFFF',
+                        'size': 14,
+                        'strokeWidth': 0
+                    }
+                ))
 
             config_h = Config(width="100%", height=500, directed=True, physics=True, hierarchical=True, highlightColor="#10B981")
             agraph(nodes=nodes_h, edges=edges_h, config=config_h)
@@ -5877,7 +5855,7 @@ elif mode == t("11. Black Site (Interrogation)"):
             st.session_state['blacksite_result'] = None # Clear old results
             
             with st.spinner(t("Injecting classified secret into target's memory...")):
-                secret_prompt = f"Generate a short, specific classified secret (e.g., an IP address, a password, or a location of an attack) that the terrorist/insurgent '{selected_prisoner}' is hiding. Return ONLY the secret string."
+                secret_prompt = f"Generate a specific classified secret for the target '{selected_prisoner}'. Return ONLY the secret string. No introduction, no quotes, no explanation."
                 try:
                     client = genai.Client(api_key=key)
                     secret_res = client.models.generate_content(model='gemini-2.5-flash', contents=secret_prompt)
