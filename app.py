@@ -1513,6 +1513,7 @@ if st.sidebar.button("Download Master PDF Dossier", type="primary", help="Compil
             'kraken_result': 'KRAKEN (APT Attack Blueprint)',
             'lazarus_result': 'LAZARUS (FININT Report)',
             'midas_result': 'MIDAS (Crypto-Forensics)',
+            'acheron_result': 'ACHERON (Ransomware & Dark Web Leak Radar)',
             'mirage_result': 'MIRAGE (Synthetic Identity)',
             'atlas_result': 'ATLAS (3D Geo-Intelligence)',
             'vulcan_result': 'VULCAN (Battlefield Forensics)',
@@ -4998,55 +4999,182 @@ elif mode == t("7. Panopticon (HVT Watchlist)"):
             st.session_state['midas_result'] = None
             st.rerun()
 
-    # --- OPERATION CERBERUS (DATA BREACH SCANNER) ---
+    # --- OPERATION ACHERON: RANSOMWARE & LEAK RADAR ---
     st.markdown("---")
-    st.subheader("Operation CERBERUS: Dark Web & Breach Footprint")
-    st.caption("Search for compromised credentials. Enter an Email, Username, or Phone Number to scan historical data leaks and pastebin dumps via surface/deep web indexing.")
+    st.subheader("Operation ACHERON: Ransomware & Leak Radar")
+    st.caption("Professional-grade monitoring of Dark Web Ransomware Leak Sites (RLS). This module detects if the target has been listed as a victim by major extortion groups (e.g., LockBit, BlackBasta, ALPHV).")
+    
+    if 'acheron_result' not in st.session_state: st.session_state['acheron_result'] = None
+    if 'acheron_target_mem' not in st.session_state: st.session_state['acheron_target_mem'] = ""
+
+    dw_target = st.text_input(t("Target Company or Domain"), placeholder=t("e.g., Ferrari, Boeing, acme.com"), key="dw_target_input")
+    
+    if st.button("Initiate Ransomware Radar", type="primary"):
+        if dw_target:
+            with st.spinner("Scanning global Dark Web extortion feeds..."):
+                try:
+                    import json
+                    url = "https://raw.githubusercontent.com/joshhighet/ransomwatch/main/posts.json"
+                    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+                    response = requests.get(url, headers=headers, timeout=15)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        target_clean = dw_target.lower()
+                        if "." in target_clean: target_clean = target_clean.split(".")[0]
+                        
+                        matches = []
+                        for post in data:
+                            post_title = post.get("post_title", "").lower()
+                            group_name = post.get("group_name", "").lower()
+                            if target_clean in post_title or target_clean in group_name:
+                                matches.append(post)
+                        
+                        if matches:
+                            raw_dw = json.dumps(matches[:10], indent=2)
+                            acheron_prompt = f"""
+                            You are an elite Cyber Threat Intelligence (CTI) Analyst (Operation ACHERON).
+                            Analyze this raw JSON data from Dark Web ransomware leak sites regarding the target: "{dw_target}".
+                            
+                            RAW DATA:
+                            {raw_dw}
+                            
+                            Format the report as a "Cyber Threat Intelligence Dossier":
+                            1. **Threat Actor Profile**: (Identify the ransomware groups involved).
+                            2. **Incident Timeline**: (Date of publication/claim on the Dark Web).
+                            3. **Strategic Risk Impact**: (Professional assessment of what this leak means for the organization's reputation and security).
+                            
+                            CRITICAL RULE: Output the dossier IMMEDIATELY. Write in {st.session_state.get('global_lang', 'English')}.
+                            """
+                            client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"]) 
+                            ai_response = client.models.generate_content(model='gemini-2.5-flash', contents=acheron_prompt)
+                            
+                            st.session_state['acheron_result'] = ai_response.text
+                            st.session_state['acheron_target_mem'] = dw_target
+                            
+                            if 'valhalla_export' not in st.session_state: st.session_state['valhalla_export'] = ""
+                            st.session_state['valhalla_export'] += f"\n\n### CTI REPORT: ACHERON (DARK WEB LEAKS)\n**Target:** {dw_target}\n\n{st.session_state['acheron_result']}\n"
+                        else:
+                            st.info(f"No ransomware claims detected for '{target_clean}'. (Safe)")
+                    else:
+                        st.error(f"Threat Intel feed error (Status {response.status_code})")
+                except Exception as e:
+                    st.error(f"ACHERON Encountered an error during scan: {e}")
+        else:
+            st.warning("Please enter a valid target.")
+
+    if st.session_state['acheron_result']:
+        st.success(f"### Dark Web Intelligence Dossier Compiled for: {st.session_state['acheron_target_mem']}")
+        with st.container(border=True):
+            st.markdown(st.session_state['acheron_result'])
+        if st.button("Clear ACHERON Scan"):
+            st.session_state['acheron_result'] = None
+            st.rerun()
+
+    # OPERATION CERBERUS: DIGITAL FOOTPRINT & BREACH
+    st.markdown("---")
+    st.subheader("Operation CERBERUS: Digital Footprint & Breach Scan")
+    st.caption("Perform an OSINT scan on an Email or Username. Maps public profiles, forum activity, and checks for compromised credentials in known data leaks.")
     
     if 'cerb_result' not in st.session_state: st.session_state['cerb_result'] = None
     if 'cerb_target_mem' not in st.session_state: st.session_state['cerb_target_mem'] = ""
     
-    cerberus_target = st.text_input("Target Identity (Email/Username):", placeholder="e.g., target@email.com or @DarkHacker99")
+    cerberus_target = st.text_input("Target Identity (Email/Username):", placeholder="e.g., target@email.com or @DarkHacker99", key="cerb_target_input")
     
     if st.button("Unleash CERBERUS", type="primary"):
         if cerberus_target:
-            with st.spinner("Scouring known breach databases and leak forums..."):
-                cerb_prompt = f"""
-                You are Operation CERBERUS, an elite Cyber Intelligence AI.
-                Target Identity: "{cerberus_target}"
-                
-                Using your Google Search capabilities, search for mentions of this identity in relation to "data breach", "leak", "pastebin", "dump", or "hacked".
-                
-                CRITICAL INSTRUCTION: DO NOT INVENT OR HALLUCINATE DATA. If the target does not exist or has no known breaches, state clearly: "Target not found in any public breach databases. No compromise detected."
-                
-                If real data IS found, format the report exactly with:
-                1. **Likely compromised platforms/services:**
-                2. **Risk of credential stuffing or identity theft:**
-                3. **Recommended OPSEC remediation:**
-                
-                CRITICAL RULE: NEVER write "Okay, I will search" or any meta-commentary. Output the report IMMEDIATELY.
-                CRITICAL RULE: Write your entire response strictly in {st.session_state['global_lang']}.
-                """
+            cerb_prompt = f"""
+            You are an elite OSINT Agent. You MUST use your Google Search tool to trace this exact identity: "{cerberus_target}"
+            
+            MANDATORY SEARCH STRATEGY:
+            Execute these Google Search queries:
+            1. inurl:"{cerberus_target}" OR intitle:"{cerberus_target}"
+            2. "{cerberus_target}" (forum OR board OR community OR member OR thread)
+            3. "{cerberus_target}" (leak OR pastebin OR breach OR compromised)
+            
+            Format the output EXACTLY as follows:
+            1. **Digital Footprint & Active Profiles:** (List platforms found. Provide clickable Markdown links `[Site Name](URL)` whenever possible).
+            2. **Forum & Deep Web Activity:** (List forums and communities. Provide clickable Markdown links `[Thread Name](URL)` if the URL is available and safe to output).
+            3. **Breach / Pastebin Exposure:** (List any security findings. If none, state "No public exposure detected").
+            4. **Public Visibility Assessment:** (Technical summary).
+            
+            CRITICAL RULES: 
+            - NEVER write introductory phrases. START IMMEDIATELY with "1. **Digital Footprint".
+            - If you cannot provide an exact URL due to safety filters or missing data, provide the Domain Name (e.g., "Found on XDA Forums"). DO NOT refuse to answer.
+            - Write strictly in {st.session_state.get('global_lang', 'English')}.
+            """
+            
+            debug_container = st.container()
+            with st.spinner("Mapping digital footprint and scouring leak databases..."):
                 try:
                     client = genai.Client(api_key=key)
-                    config_tools = types.GenerateContentConfig(tools=[{"google_search": {}}])
-                    res_cerb = client.models.generate_content(model='gemini-2.0-flash', contents=cerb_prompt, config=config_tools)
                     
-                    st.session_state['cerb_result'] = res_cerb.text
+                    config = {
+                        "tools": [{"google_search": {}}],
+                        "safety_settings": [
+                            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+                        ]
+                    }
+                    
+                    response = client.models.generate_content(
+                        model='gemini-2.0-flash',
+                        contents=cerb_prompt,
+                        config=config
+                    )
+                    
+                    if response and response.text and len(response.text.strip()) > 10:
+                        st.session_state['cerb_result'] = response.text.strip()
+                    else:
+                        st.session_state['cerb_result'] = "Investigation complete. No public digital footprint or breach data could be verified for this identity. (Automatic Fallback)"
+                    
                     st.session_state['cerb_target_mem'] = cerberus_target
+                    
+                    if 'valhalla_export' not in st.session_state:
+                        st.session_state['valhalla_export'] = ""
+                    st.session_state['valhalla_export'] += f"\n\n### OSINT REPORT: CERBERUS (FOOTPRINT & BREACH)\n**Target Identity:** {cerberus_target}\n\n{st.session_state['cerb_result']}\n"
+                    # -----------------------------------------------
+                    
+                    st.rerun()
+
                 except Exception as e:
-                    st.error(f"CERBERUS Error: {e}")
+                    debug_container.warning(f"Engine 2.0 busy ({e}). Switching to 1.5...")
+                    try:
+                        res_back = client.models.generate_content(
+                            model='gemini-1.5-flash',
+                            contents=cerb_prompt,
+                            config={"tools": [{"google_search": {}}]}
+                        )
+                        
+                        if res_back and res_back.text and len(res_back.text.strip()) > 10:
+                            st.session_state['cerb_result'] = res_back.text.strip()
+                        else:
+                            st.session_state['cerb_result'] = "Investigation complete. No public digital footprint or breach data could be verified for this identity. (Automatic Fallback)"
+                            
+                        st.session_state['cerb_target_mem'] = cerberus_target
+                        
+                        if 'valhalla_export' not in st.session_state:
+                            st.session_state['valhalla_export'] = ""
+                        st.session_state['valhalla_export'] += f"\n\n### OSINT REPORT: CERBERUS (FOOTPRINT & BREACH)\n**Target Identity:** {cerberus_target}\n\n{st.session_state['cerb_result']}\n"
+                        # -------------------------------------------------
+                        
+                        st.rerun()
+                    except Exception as e2:
+                        debug_container.error(f"Critical System Failure: {e2}")
         else:
             st.warning("Please enter a target identity.")
 
+    # PERSISTENT DISPLAY LOGIC
     if st.session_state['cerb_result']:
-        st.error(f"### CERBERUS Footprint Scan Complete for: {st.session_state['cerb_target_mem']}")
+        st.error(f"### CERBERUS OSINT Dossier Compiled for: {st.session_state['cerb_target_mem']}")
         with st.container(border=True):
             st.markdown(st.session_state['cerb_result'])
         if st.button("Clear CERBERUS Scan"):
             st.session_state['cerb_result'] = None
             st.rerun()
-        
+            
     # --- OPERATION WATCHER (AUTONOMOUS OSINT AGENT) ---
     st.markdown("---")
     st.subheader("Operation WATCHER: Autonomous OSINT Agent")
