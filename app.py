@@ -3763,39 +3763,61 @@ elif mode == t("4. Comparison Test (A/B Testing)"):
             )
 
 # ==========================================
-# MODULE 5: LIVE RADAR (RSS/REDDIT)
+# MODULE 5: LIVE RADAR (RSS/ALERTS)
 # ==========================================
-elif mode == t("5. Live Radar (RSS/Reddit)"):
-    st.header("5. Live Radar (Crisis Alert System)")
-    st.caption("Monitor live RSS feeds or subreddits to intercept escalating disinformation and aggression in real-time.")
+elif mode == t("5. Live Radar (RSS/Alerts)"):
+    st.header(t("5. Live Radar (Crisis Alert System)"))
+    st.caption(t("Monitor live RSS feeds or subreddits to intercept escalating disinformation and aggression in real-time."))
     
-    if "GEMINI_API_KEY" in st.secrets: key = st.secrets["GEMINI_API_KEY"]
-    else: key = st.text_input("API Key", type="password")
-    
+    if "GEMINI_API_KEY" in st.secrets: 
+        key = st.secrets["GEMINI_API_KEY"]
+    else: 
+        key = st.sidebar.text_input(t("API Key"), type="password", key="radar_key")
+
+    # Initializing data store for Radar if missing
+    if 'Radar' not in st.session_state['data_store']:
+        st.session_state['data_store']['Radar'] = {'df': None, 'analyzed': None}
+
     c_radar1, c_radar2, c_radar3 = st.columns([2, 1, 1])
     with c_radar1:
-        feed_url = st.text_input("Enter RSS Feed, Subreddit, or News Keyword", placeholder="E.g., ansa, bbc, reddit.com/r/worldnews")
+        feed_url = st.text_input(t("Enter RSS Feed, Subreddit, or News Keyword"), placeholder="E.g., ansa, bbc, reddit.com/r/worldnews", key="radar_input_url")
     with c_radar2:
         world_languages = ["English", "Italiano", "Español", "Français", "Deutsch", "Português", "Russian", "Arabic", "Chinese", "Japanese"]
-        news_region = st.selectbox("Search Language/Region", world_languages, index=0)
+        news_region = st.selectbox(t("Search Language/Region"), world_languages, index=0)
     with c_radar3:
-        max_entries = st.number_input("Entries", 5, 50, 15)
-        fetch_btn = st.button("Step 1: Fetch Feed", type="primary", use_container_width=True)
-        defcon_btn = st.button("🚨 DEFCON Cyber Scan", type="primary", use_container_width=True)
+        max_entries = st.number_input(t("Entries"), 5, 50, 15)
+        fetch_btn = st.button(t("Step 1: Fetch Feed"), type="primary", use_container_width=True)
+        defcon_btn = st.button(f"🚨 {t('DEFCON Cyber Scan')}", type="primary", use_container_width=True)
         
-    with st.expander("Automated Alert Configuration (Webhook)"):
-        alert_webhook = st.text_input("Webhook URL", placeholder="https://hooks.slack.com/services/...")
-        alert_threshold = st.slider("Trigger Alert Threshold (Aggression)", min_value=1.0, max_value=10.0, value=8.0, step=0.5)
+    with st.expander(t("Automated Alert Configuration (Webhook)")):
+        alert_webhook = st.text_input(t("Webhook URL"), placeholder="https://hooks.slack.com/services/...")
+        alert_threshold = st.slider(t("Trigger Alert Threshold (Aggression)"), min_value=1.0, max_value=10.0, value=8.0, step=0.5)
 
-    # --- FEED FETCHING LOGIC ---
+    # --- STEP 1: FETCHING LOGIC ---
     if (fetch_btn and feed_url) or defcon_btn:
-        with st.spinner("Intercepting live feed..."):
+        with st.spinner(t("Intercepting live feed...")):
             try:
-                actual_url = "https://feeds.feedburner.com/TheHackersNews" if defcon_btn else feed_url.strip()
+                user_input = ""
+                if defcon_btn:
+                    actual_url = "https://feeds.feedburner.com/TheHackersNews"
+                    st.toast("DEFCON Activated: Scanning Global Cyber Threats...", icon="🚨")
+                else:
+                    user_input = feed_url.strip().lower()
+                    actual_url = feed_url.strip()
+                    
+                news_shortcuts = {
+                    "ansa": "https://www.ansa.it/sito/ansait_rss.xml",
+                    "bbc": "http://feeds.bbci.co.uk/news/world/rss.xml",
+                    "repubblica": "https://www.repubblica.it/rss/homepage/rss2.0.xml"
+                }
                 
-                # Shortcuts logic
-                news_shortcuts = {"ansa": "https://www.ansa.it/sito/ansait_rss.xml", "bbc": "http://feeds.bbci.co.uk/news/world/rss.xml"}
-                if feed_url.lower() in news_shortcuts: actual_url = news_shortcuts[feed_url.lower()]
+                if user_input in news_shortcuts:
+                    actual_url = news_shortcuts[user_input]
+                elif "reddit.com/r/" in user_input and not user_input.endswith(".rss"):
+                    actual_url = actual_url.rstrip("/") + "/new/.rss"
+                elif not actual_url.startswith("http"):
+                    # Google News RSS Search Fallback
+                    actual_url = f"https://news.google.com/rss/search?q={actual_url.replace(' ', '%20')}&hl=en-US&gl=US&ceid=US:en"
                 
                 feed = feedparser.parse(actual_url)
                 if feed.entries:
@@ -3811,19 +3833,30 @@ elif mode == t("5. Live Radar (RSS/Reddit)"):
                     st.session_state['data_store']['Radar']['df'] = pd.DataFrame(entries_data)
                     st.session_state['data_store']['Radar']['analyzed'] = None
                     st.success(f"✅ Intercepted {len(entries_data)} items.")
+                    st.rerun()
             except Exception as e:
                 st.error(f"Radar Fetch Error: {str(e)}")
 
-    # --- DATA SELECTION & ANALYSIS ---
-    radar_df = st.session_state['data_store'].get('Radar', {}).get('df')
+    # --- STEP 2: DATA SELECTION & ANALYSIS ---
+    radar_df = st.session_state['data_store']['Radar'].get('df')
     if radar_df is not None:
         st.divider()
-        edited_radar = st.data_editor(radar_df, column_config={"Select": st.column_config.CheckboxColumn(required=True)}, disabled=["timestamp", "content", "link"], key="editor_radar", use_container_width=True)
+        st.subheader("Step 2: Intelligence Selection")
+        edited_radar = st.data_editor(
+            radar_df,
+            column_config={"Select": st.column_config.CheckboxColumn(required=True)},
+            disabled=["timestamp", "content", "link"],
+            key="editor_radar_v5", use_container_width=True, hide_index=True
+        )
         
         c_action, c_limit = st.columns([1, 1])
-        with c_limit: max_analyze = st.number_input("Max Rows to Analyze", 1, len(radar_df), min(10, len(radar_df)))
+        with c_limit:
+            max_analyze = st.number_input("Batch Size (Top N)", 1, len(radar_df), min(10, len(radar_df)))
         with c_action:
-            if st.button("Step 2: Run Threat Analysis", type="primary", disabled=not key):
+            st.write("")
+            selected_count = edited_radar['Select'].sum()
+            btn_label = f"Step 3: Run Analysis ({selected_count})" if selected_count > 0 else f"Step 3: Run Analysis (Top {max_analyze})"
+            if st.button(btn_label, type="primary", disabled=not key):
                 subset = edited_radar[edited_radar.Select]
                 if subset.empty: subset = edited_radar.head(max_analyze)
                 
@@ -3831,74 +3864,94 @@ elif mode == t("5. Live Radar (RSS/Reddit)"):
                 prog = st.progress(0)
                 for i, (_, row) in enumerate(subset.iterrows()):
                     crisis_prompt = f"""
-                    Analyze this news for Crisis Level (0-10) and extract ISO Alpha-3 Country.
-                    News: "{row['content']}"
-                    Return ONLY JSON: {{"aggression": 0, "reasoning": "text", "iso_country": "XXX"}}
-                    Write reasoning in {st.session_state['global_lang']}.
+                    You are an Early Warning Crisis AI. Analyze this news.
+                    Evaluate the INHERENT CRISIS LEVEL (0-10) and POLARIZATION.
+                    Respond ONLY with JSON: {{"aggression": [0-10], "reasoning": "1-sentence justification", "iso_country": "3-letter code"}}
+                    Content: "{row['content']}"
+                    Language: {st.session_state['global_lang']}
                     """
                     try:
                         client = genai.Client(api_key=key)
-                        response = client.models.generate_content(model='gemini-2.5-flash', contents=crisis_prompt)
+                        response = client.models.generate_content(model='gemini-2.0-flash', contents=crisis_prompt)
                         parsed = extract_json(response.text)
                         parsed['explanation'] = parsed.get('reasoning', 'Analyzed.')
                         parsed['has_fallacy'] = parsed.get('aggression', 0) >= 7.0
-                        parsed['fallacy_type'] = "High Crisis Alert" if parsed['has_fallacy'] else "None"
-                    except: parsed = {"aggression": 0, "explanation": "Error", "has_fallacy": False}
+                    except:
+                        parsed = {"aggression": 0, "explanation": "Error", "has_fallacy": False, "iso_country": "GLO"}
                     res.append(sanitize_response(parsed))
                     prog.progress((i + 1) / len(subset))
                 
                 st.session_state['data_store']['Radar']['analyzed'] = pd.concat([subset.reset_index(drop=True), pd.DataFrame(res)], axis=1)
                 st.rerun()
 
-    # --- RADAR RESULTS VISUALIZATION ---
-    analyzed_radar = st.session_state['data_store'].get('Radar', {}).get('analyzed')
+    # --- STEP 3: RESULTS VISUALIZATION ---
+    analyzed_radar = st.session_state['data_store']['Radar'].get('analyzed')
     if analyzed_radar is not None and not analyzed_radar.empty:
         st.divider()
         avg_agg = analyzed_radar['aggression'].mean()
         
-        c_m1, c_m2, c_m3 = st.columns(3)
-        c_m1.metric("Live Aggression Index", f"{avg_agg:.1f}/10")
-        c_m2.metric("Critical Alerts", len(analyzed_radar[analyzed_radar['has_fallacy']==True]))
-        c_m3.metric("Monitored Items", len(analyzed_radar))
+        # Metrics
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Crisis Index", f"{avg_agg:.1f}/10")
+        m2.metric("Critical Alerts", len(analyzed_radar[analyzed_radar['has_fallacy']==True]))
+        m3.metric("Processed Items", len(analyzed_radar))
         
-        if avg_agg >= alert_threshold: st.error(f"🚨 ALERT: Threshold breached ({avg_agg:.1f} >= {alert_threshold})")
+        if avg_agg >= alert_threshold:
+            st.error(f"🚨 ALERT: Global Aggression Threshold breached ({avg_agg:.1f} >= {alert_threshold})")
 
+        # Geopolitical Map
         if 'iso_country' in analyzed_radar.columns:
             st.subheader("Global Threat Sphere")
             map_data = analyzed_radar[~analyzed_radar['iso_country'].isin(['GLO', 'None', ''])]
             if not map_data.empty:
-                geo_stats = map_data.groupby('iso_country').agg(News_Count=('iso_country', 'count'), Avg_Tension=('aggression', 'mean')).reset_index()
-                fig_map = px.scatter_geo(geo_stats, locations="iso_country", size="News_Count", color="Avg_Tension", projection="orthographic", color_continuous_scale="Reds")
-                fig_map.update_layout(geo=dict(showcoastlines=True, landcolor='rgba(20, 25, 40, 1)', bgcolor='rgba(0,0,0,0)'), paper_bgcolor='rgba(0,0,0,0)', margin=dict(l=0, r=0, t=0, b=0))
-                st.plotly_chart(fig_map, use_container_width=True)
+                geo_stats = map_data.groupby('iso_country').agg(Count=('iso_country', 'count'), Tension=('aggression', 'mean')).reset_index()
+                fig = px.scatter_geo(geo_stats, locations="iso_country", size="Count", color="Tension", projection="orthographic", color_continuous_scale="Reds")
+                fig.update_layout(geo=dict(showcoastlines=True, landcolor='#1a1c24', bgcolor='rgba(0,0,0,0)'), paper_bgcolor='rgba(0,0,0,0)', margin=dict(l=0, r=0, t=30, b=0))
+                st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("Tactical Feed Analysis")
-        for idx, r in analyzed_radar.iterrows(): 
+        # Tactical Feed
+        st.subheader("Intelligence Feed")
+        for idx, r in analyzed_radar.iterrows():
             with st.container(border=True):
-                st.caption(f"🕒 {r['timestamp']} | [Source]({r['link']}) | Agg: {r['aggression']}/10")
+                st.caption(f"🕒 {r['timestamp']} | [Link]({r['link']}) | Agg: {r['aggression']}/10")
                 st.markdown(f"**{r['content'].split('CONTENT:')[0]}**")
-                if st.button(f"Spider-Scan #{idx}", key=f"sp_{idx}"):
-                    internal, external = run_web_spider(r['link'])
-                    st.write(f"Internal: {internal[:3]} | External: {external[:3]}")
+                
+                c1, c2 = st.columns([1, 1])
+                with c1:
+                    if st.button(f"Spider-Scan #{idx}", key=f"sp_{idx}"):
+                        st.write(run_web_spider(r['link']))
+                with c2:
+                    if st.button(f"PANDORA Forensic #{idx}", key=f"pan_{idx}"):
+                        st.session_state['pandora_input'] = r['content']
+                        st.info("Incident data transferred to PANDORA (Module 8).")
+                
                 if r['has_fallacy']: st.error(f"🛑 {r['explanation']}")
                 else: st.success(f"✅ {r['explanation']}")
 
-        st.divider()
-        c_ex1, c_ex2 = st.columns(2)
-        with c_ex1: st.download_button("Download CSV", analyzed_radar.to_csv(index=False), "radar.csv", "text/csv")
-        with c_ex2:
-            if st.button("Generate PDF Report"):
-                pdf_radar = generate_pdf_report(analyzed_radar, summary_text=f"Aggression: {avg_agg:.1f}")
-                st.download_button("Download PDF", pdf_radar, "radar.pdf", "application/pdf")
-
-    # --- SENTINEL MODE ---
+    # --- OPERATION SENTINEL (AUTONOMOUS ENGINE) ---
     st.divider()
-    st.subheader("Live Sentinel Mode")
-    if st.toggle("Activate Live Sentinel", key="sentinel_active") and feed_url:
-        st.info("🟢 SENTINEL ACTIVE - Scanning for updates...")
-        time.sleep(60)
-        st.rerun()
-        
+    st.subheader("Autonomous Sentinel Protocol")
+    live_toggle = st.toggle("Activate Live Sentinel Mode", key="sentinel_v5")
+    
+    if live_toggle:
+        if not feed_url and not defcon_btn:
+            st.warning("Please enter a Keyword or Source URL first.")
+        else:
+            refresh_rate = st.slider("Scan Interval (Seconds)", 30, 600, 60)
+            live_placeholder = st.empty()
+            
+            # --- AUTO-REFRESH LOGIC ---
+            # How it works: This block creates a countdown. When it expires, it triggers 
+            # a rerun. Because 'feed_url' is in the session state, the Step 1 logic above
+            # re-executes automatically on start.
+            
+            for i in range(refresh_interval if 'refresh_interval' in locals() else refresh_rate, 0, -1):
+                live_placeholder.info(f"🟢 SENTINEL ACTIVE | Monitoring: **{feed_url if not defcon_btn else 'Cyber Threats'}** | Next autonomous sweep in: **{i}s**")
+                time.sleep(1)
+            
+            # Auto-triggering Step 1 & Analysis for Sentinel
+            st.rerun()
+            
 # ==========================================
 # MODULE 6: DEEP DOCUMENT ORACLE (RAG)
 # ==========================================
