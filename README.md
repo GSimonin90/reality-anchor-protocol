@@ -41,7 +41,7 @@ We tested a modified engine (Layer 2.5) that intentionally re-introduces frictio
 
 ---
 
-## Interactive Dashboard (https://reality-anchor-protocol-dashboard.streamlit.app/)
+## Interactive Dashboard
 
 We have developed a real-time web interface to interact with the models and visualize real-world data.
 
@@ -150,6 +150,7 @@ Universal output tools for the production of strategic intelligence.
 ## Contributing
 
 This is an experimental research project. We welcome forks, pull requests, and alternative modeling approaches to challenge our parameters.
+
 
 
 
