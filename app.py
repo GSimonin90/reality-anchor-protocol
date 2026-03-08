@@ -183,20 +183,20 @@ def check_panopticon(agent_id):
     except: return None
 
 # --- HELPER: BILLING & TOKEN TRACKING ---
-# if 'api_calls' not in st.session_state: st.session_state['api_calls'] = 0
-# if 'in_tokens' not in st.session_state: st.session_state['in_tokens'] = 0
-# if 'out_tokens' not in st.session_state: st.session_state['out_tokens'] = 0
+if 'api_calls' not in st.session_state: st.session_state['api_calls'] = 0
+if 'in_tokens' not in st.session_state: st.session_state['in_tokens'] = 0
+if 'out_tokens' not in st.session_state: st.session_state['out_tokens'] = 0
 
-# def increment_counter(input_text_len=0, output_text_len=0):
-#     st.session_state['api_calls'] += 1
-#     st.session_state['in_tokens'] += (input_text_len / 4)
-#     st.session_state['out_tokens'] += (output_text_len / 4)
+def increment_counter(input_text_len=0, output_text_len=0):
+    st.session_state['api_calls'] += 1
+    st.session_state['in_tokens'] += (input_text_len / 4)
+    st.session_state['out_tokens'] += (output_text_len / 4)
 
-# def get_cost_estimate():
-#     in_t = st.session_state.get('in_tokens', 0)
-#     out_t = st.session_state.get('out_tokens', 0)
-#     cost = (in_t / 1_000_000) * 0.10 + (out_t / 1_000_000) * 0.40
-#     return (in_t + out_t), cost
+def get_cost_estimate():
+    in_t = st.session_state.get('in_tokens', 0)
+    out_t = st.session_state.get('out_tokens', 0)
+    cost = (in_t / 1_000_000) * 0.10 + (out_t / 1_000_000) * 0.40
+    return (in_t + out_t), cost
 
 # --- HELPER: DYNAMIC HQ LOCATION (FOR ATLAS) ---
 @st.cache_data(ttl=3600)
@@ -241,12 +241,11 @@ def perform_ela(image, quality=90):
     except Exception as e:
         return None
 
-# --- HELPER: OPSEC FACE ANONYMIZATION (ULTIMATE BERSERKER CALIBRATION) ---
+# --- HELPER: OPSEC FACE ANONYMIZATION (OPTIMIZED TACTICAL CALIBRATION) ---
 def anonymize_faces(image):
     """
-    Executes a dual sweep with maximum exhaustive search (scaleFactor=1.05).
-    Uses a highly precise NMS (Non-Maximum Suppression) style logic to filter overlaps
-    without deleting faces of people standing close to each other.
+    Executes a fast dual sweep.
+    Optimized scaleFactor and minNeighbors to prevent false positives ("99 faces" glitch).
     """
     try:
         # 1. Convert PIL Image to OpenCV format
@@ -258,14 +257,14 @@ def anonymize_faces(image):
         frontal_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         profile_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_profileface.xml')
         
-        # 3. SWEEP 1: Frontal Scan (Aggressive search 1.05, but minNeighbors=4 blocks background noise)
+        # 3. SWEEP 1: Frontal Scan (Increased scaleFactor to 1.1 and minNeighbors to 6 for precision/speed)
         frontal_faces = frontal_cascade.detectMultiScale(
-            gray, scaleFactor=1.05, minNeighbors=4, minSize=(20, 20)
+            gray, scaleFactor=1.1, minNeighbors=6, minSize=(30, 30)
         )
         
         # 4. SWEEP 2: Profile Scan
         profile_faces = profile_cascade.detectMultiScale(
-            gray, scaleFactor=1.05, minNeighbors=4, minSize=(20, 20)
+            gray, scaleFactor=1.1, minNeighbors=6, minSize=(30, 30)
         )
         
         # Convert tuples to lists
@@ -282,9 +281,8 @@ def anonymize_faces(image):
                 fcx, fcy = fx + fw/2, fy + fh/2
                 dist = ((cx - fcx)**2 + (cy - fcy)**2)**0.5
                 
-                # ONLY discard if the centers are EXTREMELY close (less than half the face width)
-                # This prevents deleting two different people standing shoulder-to-shoulder
-                if dist < (min(w, fw) * 0.4):
+                # ONLY discard if the centers are EXTREMELY close
+                if dist < (min(w, fw) * 0.5):
                     overlap = True
                     break
             
@@ -1267,13 +1265,16 @@ def cognitive_rewrite(text, api_key, media_data=None, media_type="image", target
         4. SYLLOGISM MACHINE: Deconstruct the core argument of the text/speech into formal logical steps.
         5. VIDEO TIMELINE: MANDATORY IF YOU SEE A STORYBOARD GRID OR A VIDEO: Provide at least 5-8 timestamp objects in the 'video_timeline' array. Read the red timestamp text on the frames (e.g., "0.00s", "2.50s") and use those for the 'timestamp' field. Detail the EXACT physical anomalies or morphing glitches at each frame. Do NOT describe the plot; describe the physical artifacts.
         6. AGGRESSION: Score emotional intensity from 0 to 10.
-        7. GHOST READER (OCR): Extract ANY visible text (signs, documents, screens) from the media. You MUST provide BOTH the original text AND its direct translation in the 'ocr_extraction' field. Format it elegantly with a double line break between them, EXACTLY like this:
-        "**Original:** [text]
-        
-        **Translation ({target_lang}):** [text]"
+        7. GHOST READER (OCR): Extract ANY visible text (signs, documents, screens) from the media. 
+           CRITICAL OCR RULE: IGNORE the red text overlay that says "Frame Time: X.XXs" (that is system metadata). ONLY extract natural text belonging to the scene. If no natural text is found, output exactly "None".
+           You MUST provide BOTH the original text AND its direct translation in the 'ocr_extraction' field. Format it elegantly with a double line break between them, EXACTLY like this:
+           "**Original:** [text]
+           
+           **Translation ({target_lang}):** [text]"
         
         CRITICAL LANGUAGE RULE: 
         You MUST write EVERY single output field (explanation, ai_analysis, shadow_geolocation, etc.) and translations STRICTLY in {target_lang}. Ignore the original language of the media or text input for your output language.
+        CRITICAL RULE 2: ABSOLUTELY NO CONVERSATIONAL FILLER. Do NOT start your explanation with "I have analyzed..." or "Based on the image...". Output the data directly and clinically.
         
         JSON OUTPUT RULES (Keep keys in English):
         - "fallacy_type": Name of the issue/fallacy.
@@ -3039,17 +3040,17 @@ elif mode == t("3. Cognitive Editor (Text/Image/Audio/Video)"):
                                 lat_ref = gps_info.get('GPSLatitudeRef', 'N')
                                 lon_ref = gps_info.get('GPSLongitudeRef', 'E')
                                 
-                                lat = float(lat_d[0]) + float(lat_d[1])/60 + float(lat_d[2])/3600
+                                lat = float(lat_d[0]) + float(lat_d[1])/60.0 + float(lat_d[2])/3600.0
                                 if lat_ref == 'S': lat = -lat
                                 
-                                lon = float(lon_d[0]) + float(lon_d[1])/60 + float(lon_d[2])/3600
+                                lon = float(lon_d[0]) + float(lon_d[1])/60.0 + float(lon_d[2])/3600.0
                                 if lon_ref == 'W': lon = -lon
                                 
                                 gps_coords = pd.DataFrame({'lat': [lat], 'lon': [lon]})
 
                         for tag_id, value in exif_info.items():
                             tag = ExifTags.TAGS.get(tag_id, tag_id)
-                            if tag != "MakerNote":
+                            if tag not in ["MakerNote", "PrintImageMatching"]:
                                 exif_data[tag] = str(value)
                 except Exception:
                     pass
@@ -3186,7 +3187,8 @@ elif mode == t("3. Cognitive Editor (Text/Image/Audio/Video)"):
                             
                             Analyze the bone structure, interocular distance, jawline, and facial proportions. 
                             Provide a "Match Probability" percentage and a brief forensic explanation detailing the similarities or differences.
-                            CRITICAL RULE: Write your entire response strictly in {st.session_state['global_lang']}.
+                            CRITICAL RULE 1: Write your entire response strictly in {st.session_state['global_lang']}.
+                            CRITICAL RULE 2: NO CONVERSATIONAL FILLER. Start your response directly with the Match Probability.
                             """
                             try:
                                 client = genai.Client(api_key=key)
@@ -3249,22 +3251,27 @@ elif mode == t("3. Cognitive Editor (Text/Image/Audio/Video)"):
                             argus_data = extract_json(res_argus.text)
                             
                             if argus_data and 'lat' in argus_data and 'lon' in argus_data:
-                                st.success(f"**ARGUS Triangulation Complete:** {argus_data.get('location_name', 'Unknown Location')}")
+                                lat_val = argus_data.get('lat')
+                                lon_val = argus_data.get('lon')
                                 
-                                # Safety catch: if the AI still returns a list like [41.9], extract the first item
-                                lat_val = argus_data['lat']
-                                lon_val = argus_data['lon']
-                                if isinstance(lat_val, list): lat_val = lat_val[0]
-                                if isinstance(lon_val, list): lon_val = lon_val[0]
-                                
-                                # Draw the interactive map
-                                df_map = pd.DataFrame({'lat': [float(lat_val)], 'lon': [float(lon_val)]})
-                                st.map(df_map, zoom=10, use_container_width=True)
-                                
-                                # Show the forensic explanation
-                                st.info(f"**Forensic Deduction:**\n{argus_data.get('explanation', '')}")
+                                if lat_val is not None and lon_val is not None and str(lat_val).strip() != "":
+                                    st.success(f"**ARGUS Triangulation Complete:** {argus_data.get('location_name', 'Unknown Location')}")
+                                    
+                                    if isinstance(lat_val, list): lat_val = lat_val[0]
+                                    if isinstance(lon_val, list): lon_val = lon_val[0]
+                                    
+                                    try:
+                                        df_map = pd.DataFrame({'lat': [float(lat_val)], 'lon': [float(lon_val)]})
+                                        st.map(df_map, zoom=10, use_container_width=True)
+                                    except ValueError:
+                                        st.warning("ARGUS deduced the location but failed to generate exact math coordinates.")
+                                    
+                                    st.info(f"**Forensic Deduction:**\n{argus_data.get('explanation', '')}")
+                                else:
+                                    st.warning("ARGUS could not confidently pinpoint exact mathematical coordinates.")
+                                    st.info(f"**Forensic Deduction:**\n{argus_data.get('explanation', 'No analysis provided.')}")
                             else:
-                                st.warning("ARGUS could not confidently pinpoint exact mathematical coordinates. Raw output:")
+                                st.warning("ARGUS failed to extract coordinates. Raw output:")
                                 st.write(res_argus.text)
                                 
                         except Exception as e:
@@ -3287,7 +3294,8 @@ elif mode == t("3. Cognitive Editor (Text/Image/Audio/Video)"):
                         3. Environmental Cover and line-of-sight advantages for a defending or attacking team.
                         4. Estimated security level of the perimeter.
                         
-                        CRITICAL RULE: Write your entire response strictly in {st.session_state['global_lang']}.
+                        CRITICAL RULE 1: Write your entire response strictly in {st.session_state['global_lang']}.
+                        CRITICAL RULE 2: ABSOLUTELY NO CONVERSATIONAL FILLER. Do NOT start with "Okay", "I am ready", or "Here is the assessment". Output the tactical data directly starting with point 1. Do NOT add concluding remarks.
                         """
                         try:
                             client = genai.Client(api_key=key)
@@ -3325,6 +3333,9 @@ elif mode == t("3. Cognitive Editor (Text/Image/Audio/Video)"):
                 st.markdown("---")
                 st.markdown(f"#### {t('Operation NEXUS: Wiretap & Decryption')}")
                 st.caption(t("Transcribe, translate, diarize (separate speakers), and extract tactical intelligence from the audio."))
+                
+                if 'nexus_result' not in st.session_state: st.session_state['nexus_result'] = None
+                
                 if st.button(t("Run NEXUS Protocol"), type="primary"):
                     with st.spinner(t("Decrypting and analyzing audio transmission...")):
                         try:
@@ -3337,14 +3348,21 @@ elif mode == t("3. Cognitive Editor (Text/Image/Audio/Video)"):
                             2. Provide a full transcript, diarized (Speaker 1, Speaker 2, etc.).
                             3. Provide a direct translation of the transcript into {st.session_state['global_lang']}.
                             4. Extract a "Tactical Dossier" listing all Names, Locations, Dates, and critical info mentioned.
-                            CRITICAL RULE: The final output formatting and structure MUST be in {st.session_state['global_lang']}.
+                            CRITICAL RULE 1: The final output formatting and structure MUST be in {st.session_state['global_lang']}.
+                            CRITICAL RULE 2: ABSOLUTELY NO CONVERSATIONAL FILLER. Your very first word MUST be "Original Language:". Do not acknowledge this prompt.
                             """
                             res_nexus = client.models.generate_content(model='gemini-2.0-flash', contents=[audio_part, nexus_prompt])
-                            st.success(t("NEXUS Decryption Complete."))
-                            with st.container(border=True):
-                                st.markdown(res_nexus.text)
+                            st.session_state['nexus_result'] = res_nexus.text
                         except Exception as e:
                             st.error(f"NEXUS Error: {e}")
+                
+                if st.session_state['nexus_result']:
+                    st.success(t("NEXUS Decryption Complete."))
+                    with st.container(border=True):
+                        st.markdown(st.session_state['nexus_result'])
+                    if st.button(t("Clear NEXUS Data")):
+                        st.session_state['nexus_result'] = None
+                        st.rerun()
         
         elif inp_type == t("Video (Deepfake Scan)"):
             text_inp = st.text_area(t("Video Context (Optional)"), placeholder=t("What is this video claiming?"), height=100)
@@ -3367,8 +3385,11 @@ elif mode == t("3. Cognitive Editor (Text/Image/Audio/Video)"):
             # --- OPERATION CHIMAERA (LIVE VIDEO INTERROGATION) ---
             if f:
                 st.markdown("---")
-                st.markdown(f"####{t('Operation CHIMAERA: Video Interrogation')}")
+                st.markdown(f"#### {t('Operation CHIMAERA: Video Interrogation')}")
                 st.caption(t("Ask specific questions about the events, people, or text visible in this video."))
+                
+                if 'chim_result' not in st.session_state: st.session_state['chim_result'] = None
+                
                 chimaera_q = st.text_input(t("What do you want to know about this video?"), placeholder=t("e.g., What is written on the license plate at 0:04?"))
                 
                 if st.button(t("Interrogate Video"), type="primary"):
@@ -3379,125 +3400,150 @@ elif mode == t("3. Cognitive Editor (Text/Image/Audio/Video)"):
                                 video_part = types.Part.from_bytes(data=raw_video_bytes, mime_type="video/mp4") 
                                 chim_prompt = f"You are Operation CHIMAERA, an elite video forensics AI. Answer this question based ONLY on the video footage: '{chimaera_q}'. Write strictly in {st.session_state['global_lang']}."
                                 res_chim = client.models.generate_content(model='gemini-2.0-flash', contents=[video_part, chim_prompt])
-                                st.success(t("Video Analysis Complete."))
-                                st.info(res_chim.text)
+                                st.session_state['chim_result'] = res_chim.text
                             except Exception as e:
                                 st.error(f"CHIMAERA Error: {e}")
                     else:
                         st.warning(t("Please enter a question."))
+                
+                if st.session_state['chim_result']:
+                    st.success(t("Video Analysis Complete."))
+                    st.info(st.session_state['chim_result'])
+                    if st.button(t("Clear CHIMAERA Data")):
+                        st.session_state['chim_result'] = None
+                        st.rerun()
             
         go = st.button(t("Analyze, Sanitize & Scan AI"), use_container_width=True, type="primary")
 
     with c2:
         st.subheader(t("Output (Analysis & Sanitize)"))
+        
+        if 'cog_result' not in st.session_state:
+            st.session_state['cog_result'] = None
+
         if go:
             if media_inp or text_inp:
                 with st.spinner(f"{t('Processing with Gemini')} ({inp_type})..."):
                     ret = cognitive_rewrite(text_inp, key, media_inp, media_type, target_lang=st.session_state['global_lang'])
-                    
-                    if ret:
-                        # --- AI SCANNER UI ---
-                        ai_prob = ret.get('ai_generated_probability', 0)
-                        if ai_prob > 75:
-                            st.error(f"🤖 **{t('HIGH PROBABILITY OF AI GENERATION:')} {ai_prob}%**")
-                            st.caption(t(ret.get('ai_analysis', 'Detected deepfake/LLM patterns.')))
-                        elif ai_prob > 40:
-                            st.warning(f"⚠️ **{t('SUSPICIOUS AI GENERATION SCORE:')} {ai_prob}%**")
-                            st.caption(t(ret.get('ai_analysis', 'Possible use of AI tools.')))
-                        else:
-                            st.success(f"👤 **{t('LIKELY HUMAN GENERATED')} ({t('AI Score:')} {ai_prob}%)**")
-                        
-                        st.markdown("---")
-
-                        # --- FORENSIC VIDEO TIMELINE ---
-                        v_timeline = ret.get('video_timeline', [])
-                        if inp_type == t("Video (Deepfake Scan)") and isinstance(v_timeline, list) and len(v_timeline) > 0:
-                            st.markdown(f"#### {t('Forensic Video Timeline')}")
-                            st.caption(t("Temporal analysis of AI manipulation probability across the video length."))
-                            vt_df = pd.DataFrame(v_timeline)
-                            # (Column renaming logic remains same as it is structural)
-                            if 'timestamp' in vt_df.columns and 'ai_score' in vt_df.columns:
-                                vt_df['ai_score'] = pd.to_numeric(vt_df['ai_score'], errors='coerce').fillna(0)
-                                chart_vt = alt.Chart(vt_df).mark_line(point=True, color='red').encode(
-                                    x=alt.X('timestamp:O', title=t('Timestamp')),
-                                    y=alt.Y('ai_score:Q', title=t('AI Probability (%)'), scale=alt.Scale(domain=[0, 100])),
-                                    tooltip=['timestamp', 'ai_score', 'details']
-                                ).properties(height=250)
-                                st.altair_chart(chart_vt, use_container_width=True)
-                                
-                                with st.expander(t("View Frame-by-Frame Details")):
-                                    for _, row in vt_df.iterrows():
-                                        st.write(f"**{row.get('timestamp', '??:??')}** ({t('Score')}: {int(row.get('ai_score', 0))}%) - {row.get('details', '')}")
-                        
-                        st.markdown("---")
-
-                        # --- FALLACY & LOGIC UI ---
-                        if ret.get('has_fallacy'):
-                            st.error(f"🛑 {t('Issue Detected:')} **{t(ret.get('fallacy_type', 'System Processing Error'))}**")
-                            st.metric(t("Aggression Level"), f"{ret.get('aggression', 0)}/10")
-                            st.warning(f"**{t('Analysis:')}** {t(ret.get('explanation', 'No details available.'))}")
-                        else:
-                            st.success(f"✅ {t('Neural Guard: No major issues detected.')}")
-                            st.info(f"**{t('Analysis:')}** {t(ret.get('explanation', 'Content is sound.'))}")
-                        
-                        st.markdown("---")
-                        syl_breakdown = ret.get('syllogism_breakdown', [])
-                        if syl_breakdown:
-                            st.markdown(f"#### {t('Logical Deconstruction')}")
-                            st.caption(t("The text was fragmented into formal premises to identify the exact point where logic fails."))
-                            for step in syl_breakdown:
-                                flaw_text = str(step.get('flaw', '')).strip()
-                                if flaw_text and flaw_text.lower() not in ["none", "nessuno", "nessuna", "n/a", "", "null"]:
-                                    st.error(f"**{t(step.get('step', 'Step'))}**: {t(step.get('text', ''))}\n\n⚠️ **{t('Logical Leap / Fallacy:')}** {t(flaw_text)}")
-                                else:
-                                    st.info(f"**{t(step.get('step', 'Step'))}**: {t(step.get('text', ''))}")
-                        
-                        st.markdown("---")
-                        st.markdown(f"#### {t('Rewritten Version / Transcript Summary')}")
-                        st.info(t(ret.get('rewritten_text', 'No rewrite available.')))
-                        
-                        st.markdown("---")
-                        if media_type == "audio" and 'voice_stress_score' in ret:
-                            stress = ret.get('voice_stress_score', 0)
-                            st.markdown(f"#### {t('Voice & Tone Analysis')}")
-                            if stress > 65:
-                                st.error(f"**{t('Voice Stress Score:')} {stress}%** ({t('High emotion, anger, or panic detected in prosody')})")
-                            else:
-                                st.success(f"**{t('Voice Stress Score:')} {stress}%** ({t('Calm, controlled, or neutral tone')})")
-                        
-                        # --- GHOST READER (OCR FORENSICS) ---
-                        if ret.get('ocr_extraction') and ret.get('ocr_extraction').lower() not in ["none", "n/a", "", "null"]:
-                            st.markdown(f"#### {t('Ghost Reader (OCR Extraction)')}")
-                            st.caption(t("AI optical scan of texts hidden in the media (signs, screens, documents)."))
-                            st.info(f"{t(ret['ocr_extraction'])}")
-                        
-                        # --- FACT CHECKER ---
-                        st.markdown(f"#### {t('Fact Checker (Claims to Verify)')}")
-                        facts = ret.get('facts', [])
-                        if facts:
-                            for f_claim in facts: st.write(f"- {t(f_claim)}")
-                        else:
-                            st.caption(t("No specific factual claims found."))
-
-                        # --- FORENSIC DOSSIER EXPORT ---
-                        st.markdown("---")
-                        file_hash = calculate_sha256(media_inp) if media_type in ['audio', 'video'] else "N/A"
-                        
-                        dossier_text = f"{t('RAP FORENSIC DOSSIER')}\n"
-                        dossier_text += f"{t('Date')}: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-                        dossier_text += f"{t('Digital Fingerprint (SHA-256)')}: {file_hash}\n"
-                        dossier_text += f"{'='*40}\n\n"
-                        dossier_text += f"[1] {t('AI GENERATION SCAN')}\n{t('AI Probability Score')}: {ai_prob}%\n\n"
-                        
-                        st.download_button(
-                            label=t("Download Forensic Dossier (TXT)"),
-                            data=dossier_text.encode('utf-8'),
-                            file_name=f"RAP_Forensic_Dossier_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
-                            mime="text/plain",
-                            type="primary"
-                        )
+                    st.session_state['cog_result'] = ret
             else:
                 st.warning(t("Please provide input."))
+
+        ret = st.session_state.get('cog_result')
+        
+        if ret:
+            # --- AI SCANNER UI ---
+            ai_prob = ret.get('ai_generated_probability', 0)
+            if ai_prob > 75:
+                st.error(f"🤖 **{t('HIGH PROBABILITY OF AI GENERATION:')} {ai_prob}%**")
+                st.caption(t(ret.get('ai_analysis', 'Detected deepfake/LLM patterns.')))
+            elif ai_prob > 40:
+                st.warning(f"⚠️ **{t('SUSPICIOUS AI GENERATION SCORE:')} {ai_prob}%**")
+                st.caption(t(ret.get('ai_analysis', 'Possible use of AI tools.')))
+            else:
+                st.success(f"👤 **{t('LIKELY HUMAN GENERATED')} ({t('AI Score:')} {ai_prob}%)**")
+            
+            st.markdown("---")
+
+            # --- FORENSIC VIDEO TIMELINE ---
+            v_timeline = ret.get('video_timeline', [])
+            if inp_type == t("Video (Deepfake Scan)") and isinstance(v_timeline, list) and len(v_timeline) > 0:
+                st.markdown(f"#### {t('Forensic Video Timeline')}")
+                st.caption(t("Temporal analysis of AI manipulation probability across the video length."))
+                vt_df = pd.DataFrame(v_timeline)
+                if 'timestamp' in vt_df.columns and 'ai_score' in vt_df.columns:
+                    vt_df['ai_score'] = pd.to_numeric(vt_df['ai_score'], errors='coerce').fillna(0)
+                    chart_vt = alt.Chart(vt_df).mark_line(point=True, color='red').encode(
+                        x=alt.X('timestamp:O', title=t('Timestamp')),
+                        y=alt.Y('ai_score:Q', title=t('AI Probability (%)'), scale=alt.Scale(domain=[0, 100])),
+                        tooltip=['timestamp', 'ai_score', 'details']
+                    ).properties(height=250)
+                    st.altair_chart(chart_vt, use_container_width=True)
+                    
+                    with st.expander(t("View Frame-by-Frame Details")):
+                        for _, row in vt_df.iterrows():
+                            st.write(f"**{row.get('timestamp', '??:??')}** ({t('Score')}: {int(row.get('ai_score', 0))}%) - {row.get('details', '')}")
+            
+            st.markdown("---")
+
+            # --- FALLACY & LOGIC UI ---
+            if ret.get('has_fallacy'):
+                st.error(f"🛑 {t('Issue Detected:')} **{t(ret.get('fallacy_type', 'System Processing Error'))}**")
+                st.metric(t("Aggression Level"), f"{ret.get('aggression', 0)}/10")
+                st.warning(f"**{t('Analysis:')}** {t(ret.get('explanation', 'No details available.'))}")
+            else:
+                st.success(f"✅ {t('Neural Guard: No major issues detected.')}")
+                st.info(f"**{t('Analysis:')}** {t(ret.get('explanation', 'Content is sound.'))}")
+            
+            st.markdown("---")
+            syl_breakdown = ret.get('syllogism_breakdown', [])
+            if syl_breakdown:
+                st.markdown(f"#### {t('Logical Deconstruction')}")
+                st.caption(t("The text was fragmented into formal premises to identify the exact point where logic fails."))
+                for step in syl_breakdown:
+                    flaw_text = str(step.get('flaw', '')).strip()
+                    if flaw_text and flaw_text.lower() not in ["none", "nessuno", "nessuna", "n/a", "", "null"]:
+                        st.error(f"**{t(step.get('step', 'Step'))}**: {t(step.get('text', ''))}\n\n⚠️ **{t('Logical Leap / Fallacy:')}** {t(flaw_text)}")
+                    else:
+                        st.info(f"**{t(step.get('step', 'Step'))}**: {t(step.get('text', ''))}")
+            
+            st.markdown("---")
+            st.markdown(f"#### {t('Rewritten Version / Transcript Summary')}")
+            st.info(t(ret.get('rewritten_text', 'No rewrite available.')))
+            
+            st.markdown("---")
+            if ret.get('shadow_geolocation') and str(ret['shadow_geolocation']).lower() not in ["none", "n/a", "", "null", "fictional ai-generated environment - geolocation not applicable."]:
+                st.markdown(f"#### 🌍 {t('Shadow Geolocation (OSINT)')}")
+                st.success(t(ret['shadow_geolocation']))
+            elif ret.get('shadow_geolocation'):
+                st.markdown(f"#### 🌍 {t('Shadow Geolocation (OSINT)')}")
+                st.caption(t(ret['shadow_geolocation']))
+            
+            st.markdown("---")
+            if media_type == "audio" and 'voice_stress_score' in ret:
+                stress = ret.get('voice_stress_score', 0)
+                st.markdown(f"#### {t('Voice & Tone Analysis')}")
+                if stress > 65:
+                    st.error(f"**{t('Voice Stress Score:')} {stress}%** ({t('High emotion, anger, or panic detected in prosody')})")
+                else:
+                    st.success(f"**{t('Voice Stress Score:')} {stress}%** ({t('Calm, controlled, or neutral tone')})")
+            
+            # --- GHOST READER (OCR FORENSICS) ---
+            st.markdown(f"#### {t('Ghost Reader (OCR Extraction)')}")
+            st.caption(t("AI optical scan of texts hidden in the media (signs, screens, documents)."))
+            ocr_val = str(ret.get('ocr_extraction', '')).strip()
+            if ocr_val and ocr_val.lower() not in ["none", "n/a", "null", ""]:
+                st.info(ocr_val)
+            else:
+                st.success(t("✅ No readable natural text detected in the scene."))
+            
+            # --- FACT CHECKER ---
+            st.markdown(f"#### {t('Fact Checker (Claims to Verify)')}")
+            facts = ret.get('facts', [])
+            if facts:
+                for f_claim in facts: st.write(f"- {t(f_claim)}")
+            else:
+                st.caption(t("No specific factual claims found."))
+
+            # --- FORENSIC DOSSIER EXPORT ---
+            st.markdown("---")
+            file_hash = calculate_sha256(media_inp) if media_type in ['audio', 'video'] else "N/A"
+            
+            dossier_text = f"{t('RAP FORENSIC DOSSIER')}\n"
+            dossier_text += f"{t('Date')}: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+            dossier_text += f"{t('Digital Fingerprint (SHA-256)')}: {file_hash}\n"
+            dossier_text += f"{'='*40}\n\n"
+            dossier_text += f"[1] {t('AI GENERATION SCAN')}\n{t('AI Probability Score')}: {ai_prob}%\n\n"
+            
+            st.download_button(
+                label=t("Download Forensic Dossier (TXT)"),
+                data=dossier_text.encode('utf-8'),
+                file_name=f"RAP_Forensic_Dossier_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+                mime="text/plain",
+                type="primary"
+            )
+        else:
+            st.warning(t("Please provide input."))
 
 # ==========================================
 # MODULE 4: COMPARISON TEST (A/B TESTING)
@@ -3975,11 +4021,11 @@ elif mode == t("6. Deep Document Oracle (RAG)"):
     else: 
         key = st.text_input(t("API Key"), type="password")
 
-    uploaded_files = st.file_uploader(t("Upload PDF Documents"), type="pdf", accept_multiple_files=True)
+    uploaded_files = st.file_uploader(t("Upload PDF/TXT Documents"), type=['pdf', 'txt'], accept_multiple_files=True)
     
     if uploaded_files:
-        if 'doc_full_text' not in st.session_state or st.button(t("Process Documents")):
-            with st.spinner(t("Extracting text from all documents...")):
+        if st.button(t("Process Documents"), type="primary"):
+            with st.spinner(t("Ingesting and vectorizing classified documents...")):
                 full_text = ""
                 for f in uploaded_files:
                     txt = extract_text_from_pdf(f)
@@ -4957,7 +5003,14 @@ elif mode == t("10. Red Teaming & HUMINT"):
     
     c_sir1, c_sir2, c_sir3 = st.columns([1, 1, 1])
     with c_sir1:
-        siren_target = st.selectbox("Select Target (from DB):", target_list) if target_list else st.text_input("Target Name:")
+        if target_list:
+            s_choice = st.selectbox("Select Target (from DB):", ["--- Custom Target ---"] + target_list)
+            if s_choice == "--- Custom Target ---":
+                siren_target = st.text_input("Enter Custom Target:")
+            else:
+                siren_target = s_choice
+        else:
+            siren_target = st.text_input("Target Name:")
     with c_sir2:
         siren_type = st.selectbox("Payload Vector:", ["1. Spear-Phishing (Email)", "2. Vishing (Voice Deepfake Script)"])
     with c_sir3:
@@ -5104,6 +5157,7 @@ elif mode == t("11. Battlefield Forensics (VULCAN)"):
                 2. Extract probable GPS coordinates or regional identifiers.
                 3. Perform a 'Threat Assessment' and suggest 'Counter-Measures'.
                 Format the output as a 'Tactical SITREP'. Write strictly in {st.session_state.get('global_lang', 'English')}.
+                CRITICAL RULE: ABSOLUTELY NO CONVERSATIONAL FILLER. Start the SITREP immediately. No introductions or conclusions.
                 """
                 
                 try:
@@ -5151,7 +5205,7 @@ elif mode == t("12. Flow of Funds (HAWKEYE)"):
                 prompt = f"""You are Operation HAWKEYE, an AML tracking AI. 
                 Analyze this transaction data: '{hawk_target}'. 
                 Map the likely flow of funds, identify money laundering red flags, and suggest legal countermeasures. 
-                Write strictly in {st.session_state.get('global_lang', 'English')}."""
+                Write strictly in {st.session_state.get('global_lang', 'English')}. NO CONVERSATIONAL FILLER. Output the analysis directly."""
                 try:
                     client = genai.Client(api_key=key)
                     res = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
