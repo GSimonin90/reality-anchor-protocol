@@ -1478,99 +1478,176 @@ mode = st.sidebar.radio(t("Select Module:"), [
     t("13. Black Site (Interrogation)")
 ])
 
-# --- OPERATION VALHALLA (MASTER DOSSIER EXPORT) ---
-st.sidebar.markdown("---")
-if st.sidebar.button("Download Master PDF Dossier", type="primary", help="Compiles a global tactical PDF report merging data from all modules (VALHALLA Protocol)."):
-    with st.spinner("Compiling global intelligence into classified PDF..."):
+# --- MODAL: DOSSIER EXPORT CONFIGURATION ---
+@st.dialog("Configure Master Dossier", width="large")
+def export_dossier_modal():
+    st.caption("Select the operations to include in the Master PDF. Operations are listed in strict chronological order.")
+    
+    available_blocks = []
+    
+    # 1. LOAD CUMULATIVE LOG (Chronological Timeline)
+    raw_log = st.session_state.get('valhalla_export', '')
+    if raw_log:
+        blocks = raw_log.split('\n\n### ')
+        for b in blocks:
+            if b.strip():
+                lines = [l.strip() for l in b.strip().split('\n') if l.strip()]
+                if not lines: continue
+                
+                title = lines[0].replace('### ', '').strip()
+                target_str = next((l.replace('**', '') for l in lines[1:4] if ':' in l and 'Time' not in l), '')
+                
+                label = f"{title}"
+                if target_str: label += f" | {target_str}"
+                
+                available_blocks.append({'label': label, 'content': "### " + b.strip(), 'type': 'cumulative'})
+
+    # 2. LOAD LEGACY SINGLE RUNS (For modules without cumulative injection)
+    memory_map = {
+        'wt_result': 'WATCHTOWER (Kinetic Tracking)',
+        'cyclops_result': 'CYCLOPS (IoT Scan)',
+        'daedalus_result': 'DAEDALUS (Honeypot Forge)',
+        'goliath_result': 'GOLIATH (PsyOp Matrix)',
+        'kraken_result': 'KRAKEN (APT Attack Blueprint)',
+        'lazarus_result': 'LAZARUS (FININT Report)',
+        'midas_result': 'MIDAS (Crypto-Forensics)',
+        'acheron_result': 'ACHERON (Dark Web & Leak Scanner)',
+        'mirage_result': 'MIRAGE (Synthetic Identity)',
+        'atlas_result': 'ATLAS (3D Geo-Intelligence)',
+        'vulcan_result': 'VULCAN (Battlefield Forensics)',
+        'hawkeye_result': 'HAWKEYE (AML Flow of Funds)',
+        'blacksite_result': 'BLACK SITE (Interrogation Confession)',
+        'omni_result': 'OMNISCIENCE (Universal Target Recon)',
+        'mice_result': 'M.I.C.E. (HUMINT Recruitment)',
+        'prom_result': 'PROMETHEUS (Stylometric Match)',
+        'siren_result': 'SIREN (Social Engineering)',
+        'echo_result': 'ECHO (Behavioral Clone)',
+        'cerb_result': 'CERBERUS (Data Breach)'
+    }
+
+    for key_mem, op_name in memory_map.items():
+        legacy_content = str(st.session_state.get(key_mem, ''))
+        if legacy_content and len(legacy_content.strip()) > 5:
+            # Bulletproof Anti-duplication: checks if the exact text is already inside the cumulative log
+            if legacy_content.strip() in raw_log:
+                continue
+                
+            available_blocks.append({
+                'label': f"Legacy Run: {op_name}",
+                'content': legacy_content,
+                'type': 'single',
+                'op_name': op_name
+            })
+
+    if not available_blocks:
+        st.warning("No operations recorded yet. Run some modules to populate the dossier.")
+        return
+
+    # 3. UI: CLEAN CHECKBOX LIST
+    sel_all = st.toggle("Select All / Deselect All", value=True)
+    st.markdown("---")
+    
+    selected_blocks = []
+    for i, block in enumerate(available_blocks):
+        # Numbering ensures clear chronological order visually
+        display_name = f"**{i+1}.** {block['label']}"
+        if st.checkbox(display_name, value=sel_all, key=f"chk_modal_{i}"):
+            selected_blocks.append(block)
+
+    st.markdown("---")
+
+    # 4. PDF GENERATION ENGINE (Upgraded Formatting)
+    if selected_blocks:
         pdf = PDFReport()
         pdf.add_page()
         pdf.set_auto_page_break(auto=True, margin=15)
         
-        # 1. Cover Page
-        pdf.set_font("Helvetica", 'B', 16)
-        pdf.cell(0, 10, "OPERATION VALHALLA: MASTER INTELLIGENCE DOSSIER", 0, 1, 'C')
+        # Cover Page
+        pdf.set_font("Helvetica", 'B', 18)
+        pdf.cell(0, 15, "OPERATION VALHALLA: MASTER DOSSIER", 0, 1, 'C')
+        
         pdf.set_font("Helvetica", 'I', 10)
-        pdf.cell(0, 10, f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | HQ: {st.session_state['hq_coords'][2]}", 0, 1, 'C')
+        pdf.set_text_color(100, 100, 100)
+        hq_coord = st.session_state.get('hq_coords', (0,0,"Classified"))
+        hq_name = hq_coord[2] if len(hq_coord) > 2 else "Classified"
+        pdf.cell(0, 5, f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", 0, 1, 'C')
+        pdf.cell(0, 5, f"Command HQ: {hq_name}", 0, 1, 'C')
+        pdf.set_text_color(0, 0, 0)
         pdf.ln(10)
         
-        # 2. Section: Panopticon (High-Value Targets) - SKIPPED IF EMPTY
-        conn = sqlite3.connect('rap_panopticon.db')
+        # Panopticon HVT List
         try:
+            conn = sqlite3.connect('rap_panopticon.db')
             df_pan = pd.read_sql_query("SELECT * FROM targets ORDER BY risk_score DESC LIMIT 10", conn)
             if not df_pan.empty:
-                pdf.set_font("Helvetica", 'B', 14)
-                pdf.cell(0, 10, "[1] PANOPTICON WATCHLIST (High-Value Targets)", 0, 1)
-                pdf.set_font("Helvetica", '', 10)
-                for _, row in df_pan.iterrows():
-                    pdf.cell(0, 6, f"- {row['agent_id']} | Class: {row['threat_type']} | Threat Score: {row['risk_score']:.1f}", 0, 1)
-                pdf.ln(5)
-        except: 
-            pass
-
-        # Map of session states to readable report names
-        memory_map = {
-            'wt_result': 'WATCHTOWER (Kinetic Tracking)',
-            'cyclops_result': 'CYCLOPS (IoT Scan)',
-            'daedalus_result': 'DAEDALUS (Honeypot Forge)',
-            'goliath_result': 'GOLIATH (PsyOp Matrix)',
-            'kraken_result': 'KRAKEN (APT Attack Blueprint)',
-            'lazarus_result': 'LAZARUS (FININT Report)',
-            'midas_result': 'MIDAS (Crypto-Forensics)',
-            'acheron_result': 'ACHERON (Dark Web & Leak Scanner)',
-            'mirage_result': 'MIRAGE (Synthetic Identity)',
-            'atlas_result': 'ATLAS (3D Geo-Intelligence)',
-            'vulcan_result': 'VULCAN (Battlefield Forensics)',
-            'hawkeye_result': 'HAWKEYE (AML Flow of Funds)',
-            'blacksite_result': 'BLACK SITE (Interrogation Confession)',
-            'omni_result': 'OMNISCIENCE (Universal Target Recon)',
-            'mice_result': 'M.I.C.E. (HUMINT Recruitment Dossier)',
-            'prom_result': 'PROMETHEUS (Stylometric Match)',
-            'siren_result': 'SIREN (Social Engineering Payload)',
-            'echo_result': 'ECHO (Behavioral Clone)',
-            'cerb_result': 'CERBERUS (Dark Web Breach Scan)',
-            'pandora_result': 'PANDORA (Cyber-Forensics & Incident Response)'
-        }
-        
-        ops_found = False
-        for key_mem, op_name in memory_map.items():
-            if st.session_state.get(key_mem):
-                ops_found = True
-                
-                # Report Header
+                pdf.set_fill_color(220, 38, 38)
+                pdf.set_text_color(255, 255, 255)
                 pdf.set_font("Helvetica", 'B', 12)
-                pdf.cell(0, 10, f"TACTICAL REPORT: {op_name.upper()}", 0, 1)
+                pdf.cell(0, 10, "  PANOPTICON WATCHLIST (HIGH-VALUE TARGETS)", 0, 1, 'L', fill=True)
+                pdf.set_text_color(0, 0, 0)
                 pdf.set_font("Helvetica", '', 10)
+                pdf.ln(3)
                 
-                # Fetch raw text
-                raw_txt = st.session_state[key_mem]
-                
-                # --- MARKDOWN SANITIZER ---
-                # Removes bold (**text**), italics (*text* not used as lists), and headers (###)
-                clean_txt = re.sub(r'\*\*(.*?)\*\*', r'\1', raw_txt) # Togli i grassetti
-                clean_txt = re.sub(r'__(.*?)__', r'\1', clean_txt) # Togli i sottolineati
-                clean_txt = re.sub(r'(?<!\w)\*(?!\s)(.*?)\*(?!\w)', r'\1', clean_txt) # Togli i corsivi
-                clean_txt = re.sub(r'#+\s*', '', clean_txt) # Togli gli hashtag dei titoli
-                
-                # Fix encoding per PDF (Latin-1)
-                clean_txt = clean_txt.encode('latin-1', 'replace').decode('latin-1')
-                
-                # Print the clean intelligence report
-                pdf.multi_cell(0, 5, clean_txt)
-                pdf.ln(8) # Extra space between different reports
-                
-        if not ops_found:
-            pdf.set_font("Helvetica", 'I', 10)
-            pdf.cell(0, 6, "No tactical operations executed in current session.", 0, 1)
+                for _, row in df_pan.iterrows():
+                    pdf.cell(0, 6, f"- {row['agent_id']} | Class: {row['threat_type']} | Score: {row['risk_score']:.1f}", 0, 1)
+                pdf.ln(8)
+        except: pass
+
+        pdf.set_fill_color(15, 23, 42)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Helvetica", 'B', 14)
+        pdf.cell(0, 10, "  TACTICAL OPERATIONS LOG", 0, 1, 'L', fill=True)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", '', 10)
+        pdf.ln(5)
+
+        for rep in selected_blocks:
+            if rep['type'] == 'single':
+                pdf.set_fill_color(241, 245, 249)
+                pdf.set_font("Helvetica", 'B', 12)
+                pdf.cell(0, 10, f"  LEGACY REPORT: {rep['op_name'].upper()}", 0, 1, 'L', fill=True)
+                pdf.set_font("Helvetica", '', 10)
+
+            raw_txt = rep['content']
+            
+            # Markdown Sanitizer
+            clean_txt = re.sub(r'\*\*(.*?)\*\*', r'\1', raw_txt)
+            clean_txt = re.sub(r'__(.*?)__', r'\1', clean_txt)
+            clean_txt = re.sub(r'(?<!\w)\*(?!\s)(.*?)\*(?!\w)', r'\1', clean_txt)
+            clean_txt = re.sub(r'#+\s*', '', clean_txt)
+            clean_txt = clean_txt.encode('latin-1', 'replace').decode('latin-1')
+            
+            pdf.multi_cell(0, 5, clean_txt)
+            pdf.ln(8)
 
         pdf_bytes_valhalla = bytes(pdf.output())
-        
-    st.sidebar.download_button(
-        label="Save Master PDF", 
-        data=pdf_bytes_valhalla, 
-        file_name=f"RAP_VALHALLA_Dossier_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf", 
-        mime="application/pdf", 
-        type="primary"
-    )
+
+        # Immediate Download Button
+        st.download_button(
+            label="Download Compiled PDF", 
+            data=pdf_bytes_valhalla, 
+            file_name=f"RAP_VALHALLA_Dossier_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf", 
+            mime="application/pdf", 
+            type="primary",
+            use_container_width=True
+        )
+    else:
+        st.error("Select at least one report to generate the PDF.")
+
+# --- OPERATION VALHALLA (SIDEBAR TRIGGER) ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("Operation VALHALLA")
+st.sidebar.caption("Master Intelligence Dossier")
+
+if st.sidebar.button("Configure & Export Dossier", type="primary", use_container_width=True):
+    export_dossier_modal()
+
+if st.sidebar.button("Clear Log Memory", use_container_width=True):
+    st.session_state['valhalla_export'] = ""
+    for k in list(st.session_state.keys()):
+        if k.endswith('_result'):
+            st.session_state[k] = None
+    st.rerun()
 
 # --- GLOBAL REPORT LANGUAGE SELECTOR ---
 st.sidebar.markdown("---")
@@ -2962,6 +3039,8 @@ elif mode == t("2. Social Data Analysis (Universal)"):
                     # 2. Save the AI output to session state
                     st.session_state['goliath_result'] = res_goliath.text
                     st.session_state['goliath_target_mem'] = goliath_obj
+                    if 'valhalla_export' not in st.session_state: st.session_state['valhalla_export'] = ""
+                    st.session_state['valhalla_export'] += f"\n\n### PSYOP MATRIX: GOLIATH\n**Target:** {goliath_obj} | {goliath_aud}\n**Time:** {datetime.now().strftime('%H:%M:%S')}\n\n{res_goliath.text}\n"
                 except Exception as e:
                     st.error(f"GOLIATH Error: {e}")
         else:
@@ -4678,6 +4757,8 @@ elif mode == t("8. Cyber-Threat Intelligence (CTI)"):
                     res_kraken = client.models.generate_content(model='gemini-2.0-flash', contents=prompt, config=types.GenerateContentConfig(tools=[{"google_search": {}}]))
                     st.session_state['kraken_result'] = res_kraken.text
                     st.session_state['kraken_target_mem'] = kraken_domain
+                    if 'valhalla_export' not in st.session_state: st.session_state['valhalla_export'] = ""
+                    st.session_state['valhalla_export'] += f"\n\n### CYBER REPORT: KRAKEN (APT BLUEPRINT)\n**Target:** {kraken_domain}\n**Time:** {datetime.now().strftime('%H:%M:%S')}\n\n{res_kraken.text}\n"
                 except Exception as e: st.error(f"KRAKEN Error: {e}")
     if st.session_state['kraken_result']:
         st.error(f"### KRAKEN Blueprint: {st.session_state['kraken_target_mem']}")
@@ -4699,6 +4780,8 @@ elif mode == t("8. Cyber-Threat Intelligence (CTI)"):
                     res_cyclops = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                     st.session_state['cyclops_result'] = res_cyclops.text
                     st.session_state['cyclops_target_mem'] = cyclops_target
+                    if 'valhalla_export' not in st.session_state: st.session_state['valhalla_export'] = ""
+                    st.session_state['valhalla_export'] += f"\n\n### CYBER REPORT: CYCLOPS (IoT EXPOSURE)\n**Target:** {cyclops_target}\n**Time:** {datetime.now().strftime('%H:%M:%S')}\n\n{res_cyclops.text}\n"
                 except Exception as e: st.error(f"CYCLOPS Error: {e}")
     if st.session_state['cyclops_result']:
         st.warning(f"### CYCLOPS Exposure Report: {st.session_state['cyclops_target_mem']}")
@@ -4721,6 +4804,8 @@ elif mode == t("8. Cyber-Threat Intelligence (CTI)"):
                     res_daedalus = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                     st.session_state['daedalus_result'] = res_daedalus.text
                     st.session_state['daedalus_target_mem'] = f"{daedalus_type} - {daedalus_target}"
+                    if 'valhalla_export' not in st.session_state: st.session_state['valhalla_export'] = ""
+                    st.session_state['valhalla_export'] += f"\n\n### CYBER REPORT: DAEDALUS (HONEYPOT)\n**Target:** {daedalus_target}\n**Time:** {datetime.now().strftime('%H:%M:%S')}\n\n{res_daedalus.text}\n"
                 except Exception as e: st.error(f"DAEDALUS Error: {e}")
     if st.session_state['daedalus_result']:
         st.success(f"### DAEDALUS Honeypot Ready: {st.session_state['daedalus_target_mem']}")
@@ -4827,6 +4912,8 @@ elif mode == t("9. Advanced OSINT & FININT"):
                     res_omni = client.models.generate_content(model='gemini-2.0-flash', contents=omni_prompt, config=types.GenerateContentConfig(tools=[{"google_search": {}}]))
                     st.session_state['omni_result'] = res_omni.text
                     st.session_state['omni_target_mem'] = f"{omni_target} ({omni_depth.split('.')[0]})"
+                    if 'valhalla_export' not in st.session_state: st.session_state['valhalla_export'] = ""
+                    st.session_state['valhalla_export'] += f"\n\n### OSINT REPORT: OMNISCIENCE\n**Target:** {omni_target}\n**Time:** {datetime.now().strftime('%H:%M:%S')}\n\n{res_omni.text}\n"
                 except Exception as e: st.error(f"OMNISCIENCE Error: {e}")
     if st.session_state['omni_result']:
         st.error(f"### OMNISCIENCE Dossier: {st.session_state['omni_target_mem']}")
@@ -4850,6 +4937,8 @@ elif mode == t("9. Advanced OSINT & FININT"):
                     res_cerb = client.models.generate_content(model='gemini-2.0-flash', contents=prompt, config=types.GenerateContentConfig(tools=[{"google_search": {}}]))
                     st.session_state['cerb_result'] = res_cerb.text if len(res_cerb.text.strip()) > 10 else "No footprint found."
                     st.session_state['cerb_target_mem'] = cerb_target
+                    if 'valhalla_export' not in st.session_state: st.session_state['valhalla_export'] = ""
+                    st.session_state['valhalla_export'] += f"\n\n### OSINT REPORT: CERBERUS (BREACH)\n**Target:** {cerb_target}\n**Time:** {datetime.now().strftime('%H:%M:%S')}\n\n{res_cerb.text}\n"
                 except Exception as e: st.error(f"CERBERUS Error: {e}")
     if st.session_state['cerb_result']:
         st.error(f"### CERBERUS Report: {st.session_state['cerb_target_mem']}")
@@ -4871,6 +4960,8 @@ elif mode == t("9. Advanced OSINT & FININT"):
                     res_midas = client.models.generate_content(model='gemini-2.0-flash', contents=prompt, config=types.GenerateContentConfig(tools=[{"google_search": {}}]))
                     st.session_state['midas_result'] = res_midas.text
                     st.session_state['midas_target_mem'] = wallet_address
+                    if 'valhalla_export' not in st.session_state: st.session_state['valhalla_export'] = ""
+                    st.session_state['valhalla_export'] += f"\n\n### FININT REPORT: MIDAS (CRYPTO)\n**Target Wallet:** {wallet_address}\n**Time:** {datetime.now().strftime('%H:%M:%S')}\n\n{res_midas.text}\n"
                 except Exception as e: st.error(f"MIDAS Error: {e}")
     if st.session_state['midas_result']:
         st.success(f"### MIDAS Dossier: {st.session_state['midas_target_mem']}")
@@ -4891,6 +4982,8 @@ elif mode == t("9. Advanced OSINT & FININT"):
                     client = genai.Client(api_key=key)
                     res_laz = client.models.generate_content(model='gemini-2.0-flash', contents=prompt, config=types.GenerateContentConfig(tools=[{"google_search": {}}]))
                     st.session_state['lazarus_result'] = res_laz.text; st.session_state['lazarus_target_mem'] = lazarus_target
+                    if 'valhalla_export' not in st.session_state: st.session_state['valhalla_export'] = ""
+                    st.session_state['valhalla_export'] += f"\n\n### FININT REPORT: LAZARUS (OFFSHORE)\n**Target:** {lazarus_target}\n**Time:** {datetime.now().strftime('%H:%M:%S')}\n\n{res_laz.text}\n"
                 except Exception as e: st.error(f"LAZARUS Error: {e}")
     if st.session_state['lazarus_result']:
         st.success(f"### LAZARUS Report: {st.session_state['lazarus_target_mem']}")
@@ -4920,6 +5013,8 @@ elif mode == t("9. Advanced OSINT & FININT"):
                         res_wt = client.models.generate_content(model='gemini-2.0-flash', contents=prompt, config=types.GenerateContentConfig(tools=[{"google_search": {}}]))
                         st.session_state['wt_result'] = res_wt.text
                         st.session_state['wt_target_mem'] = wt_id
+                        if 'valhalla_export' not in st.session_state: st.session_state['valhalla_export'] = ""
+                        st.session_state['valhalla_export'] += f"\n\n### GEOINT REPORT: WATCHTOWER (KINETIC)\n**Asset ID:** {wt_id}\n**Time:** {datetime.now().strftime('%H:%M:%S')}\n\n{res_wt.text}\n"
                     except Exception as e: 
                         st.error(f"WATCHTOWER Error: {e}")
             else:
@@ -4955,6 +5050,8 @@ elif mode == t("9. Advanced OSINT & FININT"):
                             st.session_state['atlas_result'] = atlas_json
                             st.session_state['atlas_target_mem'] = atlas_target
                             st.session_state['atlas_coords'] = (float(atlas_json['lat']), float(atlas_json['lon']))
+                            if 'valhalla_export' not in st.session_state: st.session_state['valhalla_export'] = ""
+                            st.session_state['valhalla_export'] += f"\n\n### GEOINT REPORT: ATLAS (TRIANGULATION)\n**Target:** {atlas_target}\n**Time:** {datetime.now().strftime('%H:%M:%S')}\n**Coordinates:** {atlas_json.get('lat')}, {atlas_json.get('lon')}\n**Analysis:** {atlas_json.get('analysis')}\n"
                     except Exception as e: st.error(f"ATLAS Error: {e}")
 
     # Render ATLAS 3D Globe
@@ -5026,6 +5123,8 @@ elif mode == t("10. Red Teaming & HUMINT"):
                     res = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                     st.session_state['siren_result'] = res.text
                     st.session_state['siren_target_mem'] = f"{siren_target} ({siren_type.split(' ')[1]})"
+                    if 'valhalla_export' not in st.session_state: st.session_state['valhalla_export'] = ""
+                    st.session_state['valhalla_export'] += f"\n\n### RED TEAM REPORT: SIREN (PAYLOAD)\n**Target:** {siren_target}\n**Vector:** {siren_type}\n**Time:** {datetime.now().strftime('%H:%M:%S')}\n\n{res.text}\n"
                 except Exception as e: st.error(f"SIREN Error: {e}")
     if st.session_state['siren_result']:
         st.error(f"### SIREN Payload: {st.session_state['siren_target_mem']}")
@@ -5040,7 +5139,11 @@ elif mode == t("10. Red Teaming & HUMINT"):
         st.subheader("Operation ECHO: Target Clone")
         st.caption("Simulate a conversation with the target based on their profile.")
         if 'echo_result' not in st.session_state: st.session_state['echo_result'] = None
-        echo_tgt = st.selectbox("Clone Target:", target_list, key="echo_sel") if target_list else st.text_input("Clone Target:")
+        if target_list:
+            e_choice = st.selectbox("Clone Target:", ["--- Custom Target ---"] + target_list, key="echo_sel")
+            echo_tgt = st.text_input("Enter Custom Target:", key="echo_cust") if e_choice == "--- Custom Target ---" else e_choice
+        else:
+            echo_tgt = st.text_input("Clone Target:", key="echo_cust")
         echo_q = st.text_input("Interrogate Clone:", placeholder="What are your plans?")
         
         if st.button("Initialize ECHO", type="primary"):
@@ -5051,6 +5154,8 @@ elif mode == t("10. Red Teaming & HUMINT"):
                         client = genai.Client(api_key=key)
                         res_echo = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                         st.session_state['echo_result'] = res_echo.text
+                        if 'valhalla_export' not in st.session_state: st.session_state['valhalla_export'] = ""
+                        st.session_state['valhalla_export'] += f"\n\n### HUMINT REPORT: ECHO (BEHAVIORAL CLONE)\n**Target:** {echo_tgt}\n**Interrogation:** {echo_q}\n**Time:** {datetime.now().strftime('%H:%M:%S')}\n\n**Response:** {res_echo.text}\n"
                     except Exception as e: 
                         st.error(f"ECHO Error: {e}")
                         
@@ -5061,7 +5166,11 @@ elif mode == t("10. Red Teaming & HUMINT"):
         st.subheader("Operation PROMETHEUS")
         st.caption("Stylometric match: Did the target write this anonymous text?")
         if 'prom_result' not in st.session_state: st.session_state['prom_result'] = None
-        prom_tgt = st.selectbox("Match Target:", target_list, key="prom_sel") if target_list else st.text_input("Match Target:")
+        if target_list:
+            p_choice = st.selectbox("Match Target:", ["--- Custom Target ---"] + target_list, key="prom_sel")
+            prom_tgt = st.text_input("Enter Custom Target:", key="prom_cust") if p_choice == "--- Custom Target ---" else p_choice
+        else:
+            prom_tgt = st.text_input("Match Target:", key="prom_cust")
         prom_txt = st.text_area("Anonymous Text:")
         
         if st.button("Run Match", type="primary"):
@@ -5072,6 +5181,8 @@ elif mode == t("10. Red Teaming & HUMINT"):
                         client = genai.Client(api_key=key)
                         res_prom = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                         st.session_state['prom_result'] = res_prom.text
+                        if 'valhalla_export' not in st.session_state: st.session_state['valhalla_export'] = ""
+                        st.session_state['valhalla_export'] += f"\n\n### RED TEAM REPORT: PROMETHEUS (STYLOMETRY)\n**Target:** {prom_tgt}\n**Time:** {datetime.now().strftime('%H:%M:%S')}\n\n{res_prom.text}\n"
                     except Exception as e: 
                         st.error(f"PROMETHEUS Error: {e}")
                         
@@ -5087,7 +5198,11 @@ elif mode == t("10. Red Teaming & HUMINT"):
         st.markdown("**M.I.C.E. Recruitment Protocol**")
         st.caption("Money, Ideology, Coercion, Ego. Find the leverage.")
         if 'mice_result' not in st.session_state: st.session_state['mice_result'] = None
-        mice_tgt = st.selectbox("MICE Target:", target_list, key="mice_sel") if target_list else st.text_input("MICE Target:")
+        if target_list:
+            m_choice = st.selectbox("MICE Target:", ["--- Custom Target ---"] + target_list, key="mice_sel")
+            mice_tgt = st.text_input("Enter Custom Target:", key="mice_cust") if m_choice == "--- Custom Target ---" else m_choice
+        else:
+            mice_tgt = st.text_input("MICE Target:", key="mice_cust")
         
         if st.button("Generate M.I.C.E. Dossier", type="primary"):
             if mice_tgt:
@@ -5097,6 +5212,8 @@ elif mode == t("10. Red Teaming & HUMINT"):
                         client = genai.Client(api_key=key)
                         res_mice = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                         st.session_state['mice_result'] = res_mice.text
+                        if 'valhalla_export' not in st.session_state: st.session_state['valhalla_export'] = ""
+                        st.session_state['valhalla_export'] += f"\n\n### HUMINT REPORT: M.I.C.E. (RECRUITMENT DOSSIER)\n**Target:** {mice_tgt}\n**Time:** {datetime.now().strftime('%H:%M:%S')}\n\n{res_mice.text}\n"
                     except Exception as e: 
                         st.error(f"M.I.C.E Error: {e}")
                         
@@ -5119,6 +5236,8 @@ elif mode == t("10. Red Teaming & HUMINT"):
                         client = genai.Client(api_key=key)
                         res_mir = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                         st.session_state['mirage_result'] = res_mir.text
+                        if 'valhalla_export' not in st.session_state: st.session_state['valhalla_export'] = ""
+                        st.session_state['valhalla_export'] += f"\n\n### HUMINT REPORT: MIRAGE (SYNTHETIC IDENTITY)\n**Cover Role:** {mirage_role}\n**Time:** {datetime.now().strftime('%H:%M:%S')}\n\n{res_mir.text}\n"
                     except Exception as e: 
                         st.error(f"MIRAGE Error: {e}")
                         
@@ -5210,6 +5329,8 @@ elif mode == t("12. Flow of Funds (HAWKEYE)"):
                     client = genai.Client(api_key=key)
                     res = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                     st.session_state['hawkeye_result'] = res.text
+                    if 'valhalla_export' not in st.session_state: st.session_state['valhalla_export'] = ""
+                    st.session_state['valhalla_export'] += f"\n\n### AML REPORT: HAWKEYE (FLOW OF FUNDS)\n**Time:** {datetime.now().strftime('%H:%M:%S')}\n\n{res.text}\n"
                 except Exception as e: st.error(f"HAWKEYE Error: {e}")
                 
     if st.session_state['hawkeye_result']:
@@ -5327,7 +5448,9 @@ elif mode == t("13. Black Site (Interrogation)"):
                                 # SAVING TO GLOBAL MEMORY ONCE BROKEN
                                 if new_res == 0:
                                     st.session_state['blacksite_result'] = f"**Target Extracted:** {st.session_state['bs_target']}\n**Secret Uncovered:** {st.session_state['bs_secret']}\n\n**Final Confession:**\n{p_reply}"
-                                
+                                    if 'valhalla_export' not in st.session_state: st.session_state['valhalla_export'] = ""
+                                    st.session_state['valhalla_export'] += f"\n\n### INTERROGATION REPORT: THE BLACK SITE\n**Target:** {st.session_state['bs_target']}\n**Time:** {datetime.now().strftime('%H:%M:%S')}\n**Secret Extracted:** {st.session_state['bs_secret']}\n\n**Final Confession:**\n{p_reply}\n"
+                                    
                                 st.markdown(p_reply)
                                 st.rerun() 
                             else:
